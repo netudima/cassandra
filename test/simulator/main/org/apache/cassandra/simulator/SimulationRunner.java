@@ -70,12 +70,10 @@ import static org.apache.cassandra.config.CassandraRelevantProperties.IGNORE_MIS
 import static org.apache.cassandra.config.CassandraRelevantProperties.ORG_APACHE_CASSANDRA_DISABLE_MBEAN_REGISTRATION;
 import static org.apache.cassandra.config.CassandraRelevantProperties.LIBJEMALLOC;
 import static org.apache.cassandra.config.CassandraRelevantProperties.MEMTABLE_OVERHEAD_SIZE;
-import static org.apache.cassandra.config.CassandraRelevantProperties.MIGRATION_DELAY;
 import static org.apache.cassandra.config.CassandraRelevantProperties.PAXOS_REPAIR_RETRY_TIMEOUT_IN_MS;
 import static org.apache.cassandra.config.CassandraRelevantProperties.RING_DELAY;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SHUTDOWN_ANNOUNCE_DELAY_IN_MS;
 import static org.apache.cassandra.config.CassandraRelevantProperties.SYSTEM_AUTH_DEFAULT_RF;
-import static org.apache.cassandra.config.CassandraRelevantProperties.TEST_IGNORE_SIGAR;
 import static org.apache.cassandra.config.CassandraRelevantProperties.DISABLE_GOSSIP_ENDPOINT_REMOVAL;
 import static org.apache.cassandra.config.CassandraRelevantProperties.TEST_JVM_DTEST_DISABLE_SSL;
 import static org.apache.cassandra.simulator.debug.Reconcile.reconcileWith;
@@ -122,9 +120,7 @@ public class SimulationRunner
         DISABLE_SSTABLE_ACTIVITY_TRACKING.setBoolean(false);
         DETERMINISM_SSTABLE_COMPRESSION_DEFAULT.setBoolean(false); // compression causes variation in file size for e.g. UUIDs, IP addresses, random file paths
         CONSISTENT_DIRECTORY_LISTINGS.setBoolean(true);
-        TEST_IGNORE_SIGAR.setBoolean(true);
         SYSTEM_AUTH_DEFAULT_RF.setInt(3);
-        MIGRATION_DELAY.setInt(Integer.MAX_VALUE);
         DISABLE_GOSSIP_ENDPOINT_REMOVAL.setBoolean(true);
         MEMTABLE_OVERHEAD_SIZE.setInt(100);
         IGNORE_MISSING_NATIVE_FILE_HINTS.setBoolean(true);
@@ -362,9 +358,9 @@ public class SimulationRunner
 
             try (ClusterSimulation<?> cluster = builder.create(seed))
             {
-                try
+                try (Simulation simulation = cluster.simulation())
                 {
-                    cluster.simulation.run();
+                    simulation.run();
                 }
                 catch (Throwable t)
                 {

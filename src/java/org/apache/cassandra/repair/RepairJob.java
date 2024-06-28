@@ -59,6 +59,7 @@ import org.apache.cassandra.utils.concurrent.FutureCombiner;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
 
 import static org.apache.cassandra.config.DatabaseDescriptor.paxosRepairEnabled;
+import static org.apache.cassandra.schema.SchemaConstants.METADATA_KEYSPACE_NAME;
 import static org.apache.cassandra.service.paxos.Paxos.useV2;
 
 /**
@@ -125,7 +126,7 @@ public class RepairJob extends AsyncFuture<RepairResult> implements Runnable
         allEndpoints.add(ctx.broadcastAddressAndPort());
 
         Future<Void> paxosRepair;
-        if (paxosRepairEnabled() && ((useV2() && session.repairPaxos) || session.paxosOnly))
+        if (paxosRepairEnabled() && (((useV2() || isMetadataKeyspace()) && session.repairPaxos) || session.paxosOnly))
         {
             logger.info("{} {}.{} starting paxos repair", session.previewKind.logPrefix(session.getId()), desc.keyspace, desc.columnFamily);
             TableMetadata metadata = Schema.instance.getTableMetadata(desc.keyspace, desc.columnFamily);
@@ -273,6 +274,11 @@ public class RepairJob extends AsyncFuture<RepairResult> implements Runnable
             v.abort(reason);
         for (SyncTask s : syncTasks)
             s.abort(reason);
+    }
+
+    private boolean isMetadataKeyspace()
+    {
+        return desc.keyspace.equals(METADATA_KEYSPACE_NAME);
     }
 
     private boolean isTransient(InetAddressAndPort ep)
@@ -453,7 +459,8 @@ public class RepairJob extends AsyncFuture<RepairResult> implements Runnable
                     List<Range<Token>> toFetch = new ArrayList<>(streamsFor.get(fetchFrom));
                     assert !toFetch.isEmpty();
 
-                    logger.trace("{} is about to fetch {} from {}", address, toFetch, fetchFrom);
+                    if (logger.isTraceEnabled())
+                        logger.trace("{} is about to fetch {} from {}", address, toFetch, fetchFrom);
                     SyncTask task;
                     if (address.equals(local))
                     {

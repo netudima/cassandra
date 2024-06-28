@@ -47,7 +47,6 @@ import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.Scanner;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -67,7 +66,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.vdurmont.semver4j.Semver;
-import com.vdurmont.semver4j.SemverException;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -139,7 +137,7 @@ public class FBUtilities
 
     private static int availableProcessors = CASSANDRA_AVAILABLE_PROCESSORS.getInt(DatabaseDescriptor.getAvailableProcessors());
 
-    private static volatile Supplier<Semver> kernelVersionSupplier = Suppliers.memoize(FBUtilities::getKernelVersionFromUname);
+    private static volatile Supplier<SystemInfo> systemInfoSupplier = Suppliers.memoize(SystemInfo::new);
 
     public static void setAvailableProcessors(int value)
     {
@@ -147,9 +145,9 @@ public class FBUtilities
     }
 
     @VisibleForTesting
-    public static void setKernelVersionSupplier(Supplier<Semver> supplier)
+    public static void setSystemInfoSupplier(Supplier<SystemInfo> supplier)
     {
-        kernelVersionSupplier = supplier;
+        systemInfoSupplier = supplier;
     }
 
     public static int getAvailableProcessors()
@@ -557,11 +555,34 @@ public class FBUtilities
         }
         catch (ExecutionException ee)
         {
+            logger.info("Exception occurred in async code", ee);
             throw Throwables.cleaned(ee);
         }
         catch (InterruptedException ie)
         {
             throw new UncheckedInterruptedException(ie);
+        }
+    }
+
+    public static <T> T waitOnFuture(Future<T> future, Duration timeout)
+    {
+        Preconditions.checkArgument(!timeout.isNegative(), "Timeout must not be negative, provided %s", timeout);
+        try
+        {
+            return future.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        }
+        catch (ExecutionException ee)
+        {
+            logger.info("Exception occurred in async code", ee);
+            throw Throwables.cleaned(ee);
+        }
+        catch (InterruptedException ie)
+        {
+            throw new AssertionError(ie);
+        }
+        catch (TimeoutException e)
+        {
+            throw new RuntimeException("Timeout - task did not finish in " + timeout);
         }
     }
 
@@ -879,6 +900,37 @@ public class FBUtilities
     }
 
     /**
+     * Formats a latency value in milliseconds for display, appending an "ms" suffix.
+     * The formatted output is rounded to three decimal places.
+     * For example, "5000.000 ms", "100.000 ms", "0.050 ms", "0.000 ms", "NaN ms".
+     * @param latency   Latency in milliseconds to print.
+     */
+    public static String prettyPrintLatency(double latency)
+    {
+        return String.format("%.3f ms", latency);
+    }
+
+    /**
+     * Formats a ratio value for display, rounds it to three decimal places.
+     * For example, "10.000", "1.000", "0.050", "0.001", "0.000", "NaN".
+     * @param ratio   Ratio to print.
+     */
+    public static String prettyPrintRatio(double ratio)
+    {
+        return String.format("%.3f", ratio);
+    }
+
+    /**
+     * Formats an average value for display, rounds it to two decimal places.
+     * For example, "100500.00", "1.50", "0.05", "0.00", "NaN".
+     * @param average   Average value to print.
+     */
+    public static String prettyPrintAverage(double average)
+    {
+        return String.format("%.2f", average);
+    }
+
+    /**
      * Convert the given size in bytes to a human-readable value using binary (i.e. 2^10-based) modifiers.
      * For example, 1.000KiB, 2.100GiB etc., up to 8.000 EiB.
      * @param size      Number to convert.
@@ -1081,9 +1133,9 @@ public class FBUtilities
                         sb.append(str).append(lineSep);
                     while ((str = err.readLine()) != null)
                         sb.append(str).append(lineSep);
-                    throw new IOException("Exception while executing the command: "+ StringUtils.join(pb.command(), " ") +
+                    throw new IOException("Exception while executing the command: " + StringUtils.join(pb.command(), " ") +
                                           ", command error Code: " + errCode +
-                                          ", command output: "+ sb.toString());
+                                          ", command output: " + sb);
                 }
             }
         }
@@ -1350,6 +1402,9 @@ public class FBUtilities
 
     public static String camelToSnake(String camel)
     {
+        if (camel.chars().allMatch(Character::isUpperCase))
+            return camel.toLowerCase();
+
         StringBuilder sb = new StringBuilder();
         for (char c : camel.toCharArray())
         {
@@ -1396,62 +1451,11 @@ public class FBUtilities
 
     public static Semver getKernelVersion()
     {
-        return kernelVersionSupplier.get();
+        return systemInfoSupplier.get().getKernelVersion();
     }
 
-    @VisibleForTesting
-    static Semver getKernelVersionFromUname()
+    public static SystemInfo getSystemInfo()
     {
-        // TODO rewrite this method with Oshi when it is eventually included in the project
-        if (!isLinux)
-            return null;
-
-        String output = null;
-        try
-        {
-            output = exec(Map.of(), Duration.ofSeconds(5), 1024, 1024, "uname", "-r");
-
-            if (output.isEmpty())
-                throw new RuntimeException("Error while trying to get kernel version, 'uname -r' returned empty output");
-
-            return parseKernelVersion(output);
-        }
-        catch (SemverException e)
-        {
-            logger.error("SemverException parsing {}", output, e);
-            throw e;
-        }
-        catch (IOException | TimeoutException e)
-        {
-            throw new RuntimeException("Error while trying to get kernel version", e);
-        }
-        catch (InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
-        }
-    }
-
-    @VisibleForTesting
-    static Semver parseKernelVersion(String versionString)
-    {
-        Preconditions.checkNotNull(versionString, "kernel version cannot be null");
-        // ignore blank lines
-        try (Scanner scanner = new Scanner(versionString))
-        {
-            while (scanner.hasNextLine())
-            {
-                String version = scanner.nextLine().trim();
-                if (version.isEmpty())
-                    continue;
-
-                if (version.endsWith("+"))
-                        // gcp's cos_containerd has a trailing +
-                        version = StringUtils.chop(version);
-
-                return new Semver(version, Semver.SemverType.LOOSE);
-            }
-        }
-        throw new IllegalArgumentException("Error while trying to parse kernel version - no version found");
+        return systemInfoSupplier.get();
     }
 }

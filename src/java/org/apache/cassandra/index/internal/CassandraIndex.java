@@ -33,9 +33,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.schema.TableMetadataRef;
-import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 import org.apache.cassandra.db.*;
@@ -56,7 +53,9 @@ import org.apache.cassandra.index.internal.keys.KeysSearcher;
 import org.apache.cassandra.index.transactions.IndexTransaction;
 import org.apache.cassandra.io.sstable.ReducingKeyIterator;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.IndexMetadata;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -202,7 +201,7 @@ public abstract class CassandraIndex implements Index
     public Callable<?> getMetadataReloadTask(IndexMetadata indexDef)
     {
         return () -> {
-            indexCfs.reload();
+            indexCfs.reload(indexCfs.metadata());
             return null;
         };
     }
@@ -225,10 +224,10 @@ public abstract class CassandraIndex implements Index
         metadata = indexDef;
         Pair<ColumnMetadata, IndexTarget.Type> target = TargetParser.parse(baseCfs.metadata(), indexDef);
         functions = getFunctions(indexDef, target);
-        TableMetadataRef tableRef = TableMetadataRef.forOfflineTools(indexCfsMetadata(baseCfs.metadata(), indexDef));
+        TableMetadata tm = indexCfsMetadata(baseCfs.metadata(), indexDef);
         indexCfs = ColumnFamilyStore.createColumnFamilyStore(baseCfs.keyspace,
-                                                             tableRef.name,
-                                                             tableRef,
+                                                             tm.name,
+                                                             tm,
                                                              baseCfs.getTracker().loadsstables);
         indexedColumn = target.left;
     }

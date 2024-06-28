@@ -37,7 +37,6 @@ import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.net.MessageDelivery;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.ActiveRepairService;
-import org.apache.cassandra.service.PendingRangeCalculatorService;
 import org.apache.cassandra.service.paxos.cleanup.PaxosRepairState;
 import org.apache.cassandra.streaming.StreamPlan;
 import org.apache.cassandra.utils.Clock;
@@ -81,7 +80,6 @@ public interface SharedContext
     IValidationManager validationManager();
     TableRepairManager repairManager(ColumnFamilyStore store);
     StreamExecutor streamExecutor();
-    PendingRangeCalculatorService pendingRangeCalculator();
     PaxosRepairState paxosRepairState();
 
     class Global implements SharedContext
@@ -188,12 +186,6 @@ public interface SharedContext
         public StreamExecutor streamExecutor()
         {
             return StreamPlan::execute;
-        }
-
-        @Override
-        public PendingRangeCalculatorService pendingRangeCalculator()
-        {
-            return PendingRangeCalculatorService.instance;
         }
 
         @Override
@@ -317,12 +309,6 @@ public interface SharedContext
         public StreamExecutor streamExecutor()
         {
             return delegate().streamExecutor();
-        }
-
-        @Override
-        public PendingRangeCalculatorService pendingRangeCalculator()
-        {
-            return delegate().pendingRangeCalculator();
         }
 
         @Override

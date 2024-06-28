@@ -19,7 +19,6 @@
 package org.apache.cassandra.db.memtable;
 
 import java.util.concurrent.atomic.AtomicReference;
-
 import javax.annotation.concurrent.NotThreadSafe;
 
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -33,7 +32,6 @@ import org.apache.cassandra.db.rows.EncodingStats;
 import org.apache.cassandra.db.rows.UnfilteredSource;
 import org.apache.cassandra.index.transactions.UpdateTransaction;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
-import org.apache.cassandra.metrics.TableMetrics;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.schema.TableMetadataRef;
 import org.apache.cassandra.utils.FBUtilities;
@@ -83,6 +81,16 @@ public interface Memtable extends Comparable<Memtable>, UnfilteredSource
          * @param owner Owning objects that will receive flush requests triggered by the memtable (e.g. on expiration).
          */
         Memtable create(AtomicReference<CommitLogPosition> commitLogLowerBound, TableMetadataRef metadaRef, Owner owner);
+
+        /**
+         * Create a release action for the memtable's metrics. This is used to release any resources that are not needed.
+         * @param metadataRef Pointer to the up-to-date table metadata.
+         * @return Runnable that releases the metrics resources.
+         */
+        default Runnable createMemtableMetricsReleaser(TableMetadataRef metadataRef)
+        {
+            return () -> {};
+        }
 
         /**
          * If the memtable can achieve write durability directly (i.e. using some feature other than the commitlog, e.g.
@@ -136,17 +144,6 @@ public interface Memtable extends Comparable<Memtable>, UnfilteredSource
         default boolean streamFromMemtable()
         {
             return false;
-        }
-
-        /**
-         * Override this method to include implementation-specific memtable metrics in the table metrics.
-         *
-         * Memtable metrics lifecycle matches table lifecycle. It is the table that owns the metrics and
-         * decides when to release them.
-         */
-        default TableMetrics.ReleasableMetric createMemtableMetrics(TableMetadataRef metadataRef)
-        {
-            return null;
         }
     }
 
@@ -399,10 +396,19 @@ public interface Memtable extends Comparable<Memtable>, UnfilteredSource
      * - SNAPSHOT will be followed by performSnapshot().
      * - STREAMING/REPAIR will be followed by creating a FlushSet for the streamed/repaired ranges. This data will be
      *   used to create sstables, which will be streamed and then deleted.
+     * The table metadata is supplied explicitly as this might not be the same as the current published metadata for
+     * the table. When applying a schema change, the ColumnFamilyStore instance is reloaded using the new table metadata
+     * before the Schema registry is updated. The memtable needs to examine the new metadata in order to determine
+     * whether the changes warrant a switch.
      * This will not be called to perform truncation or drop (in that case the memtable is unconditionally dropped),
      * but a flush may nevertheless be requested in that case to prepare a snapshot.
      */
-    boolean shouldSwitch(ColumnFamilyStore.FlushReason reason);
+    boolean shouldSwitch(ColumnFamilyStore.FlushReason reason, TableMetadata latest);
+
+    default boolean shouldSwitch(ColumnFamilyStore.FlushReason reason)
+    {
+        return shouldSwitch(reason, metadata());
+    }
 
     /**
      * Called when the table's metadata is updated. The memtable's metadata reference now points to the new version.

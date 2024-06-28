@@ -96,6 +96,7 @@ import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.locator.RangesAtEndpoint;
 import org.apache.cassandra.metrics.CompactionMetrics;
 import org.apache.cassandra.metrics.TableMetrics;
@@ -113,9 +114,12 @@ import org.apache.cassandra.utils.OutputHandler;
 import org.apache.cassandra.utils.Throwables;
 import org.apache.cassandra.utils.TimeUUID;
 import org.apache.cassandra.utils.WrappedRunnable;
+import org.apache.cassandra.tcm.ClusterMetadata;
+import org.apache.cassandra.tcm.ownership.DataPlacement;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
 import org.apache.cassandra.utils.concurrent.Refs;
+
 
 import static java.util.Collections.singleton;
 import static org.apache.cassandra.concurrent.ExecutorFactory.Global.executorFactory;
@@ -229,7 +233,11 @@ public class CompactionManager implements CompactionManagerMBean, ICompactionMan
     {
         if (cfs.isAutoCompactionDisabled())
         {
-            logger.trace("Autocompaction is disabled");
+            logger.debug("Autocompaction on {}.{} is disabled (disabled: {}, paused: {})",
+                         cfs.keyspace.getName(), cfs.name,
+                         !cfs.getCompactionStrategyManager().isEnabled(),
+                         !cfs.getCompactionStrategyManager().isActive());
+
             return Collections.emptyList();
         }
 
@@ -242,8 +250,10 @@ public class CompactionManager implements CompactionManagerMBean, ICompactionMan
         int count = compactingCF.count(cfs);
         if (count > 0 && executor.getActiveTaskCount() >= executor.getMaximumPoolSize())
         {
-            logger.trace("Background compaction is still running for {}.{} ({} remaining). Skipping",
-                         cfs.getKeyspaceName(), cfs.name, count);
+            if (logger.isTraceEnabled())
+                logger.trace("Background compaction is still running for {}.{} ({} remaining). Skipping",
+                             cfs.getKeyspaceName(), cfs.name, count);
+
             return Collections.emptyList();
         }
 
@@ -616,17 +626,26 @@ public class CompactionManager implements CompactionManagerMBean, ICompactionMan
     {
         assert !cfStore.isIndex();
         Keyspace keyspace = cfStore.keyspace;
-        if (!StorageService.instance.getTokenMetadata().getPendingRanges(keyspace.getName(), FBUtilities.getBroadcastAddressAndPort()).isEmpty())
+
+        if (!StorageService.instance.isJoined())
         {
-            logger.info("Cleanup cannot run while node has pending ranges for keyspace {} table {}, wait for node addition/decommission to complete and try again", cfStore.keyspace.getName(), cfStore.getTableName());
+            logger.info("Cleanup cannot run before a node has joined the ring");
             return AllSSTableOpStatus.ABORTED;
         }
-        // if local ranges is empty, it means no data should remain
-        final RangesAtEndpoint replicas = StorageService.instance.getLocalReplicas(keyspace.getName());
-        final Set<Range<Token>> allRanges = replicas.ranges();
-        final Set<Range<Token>> transientRanges = replicas.onlyTransient().ranges();
-        final Set<Range<Token>> fullRanges = replicas.onlyFull().ranges();
+        if (cfStore.keyspace.getMetadata().params.replication.isMeta())
+            return AllSSTableOpStatus.SUCCESSFUL; // todo - we probably want to be able to cleanup MetaStrategy keyspaces
         final boolean hasIndexes = cfStore.indexManager.hasIndexes();
+
+        // if local ranges is empty, it means no data should remain
+        // we only consider write placements during cleanup as range movements always ensure
+        // overlap between new replicas accepting reads and old replicas accepting writes
+        ClusterMetadata cm = ClusterMetadata.current();
+        DataPlacement placement = cm.placements.get(keyspace.getMetadata().params.replication);
+        InetAddressAndPort local = FBUtilities.getBroadcastAddressAndPort();
+        RangesAtEndpoint localWrites = placement.writes.byEndpoint().get(local);
+        final Set<Range<Token>> allRanges = new HashSet<>(localWrites.ranges());
+        final Set<Range<Token>> transientRanges = new HashSet<>(localWrites.onlyTransient().ranges());
+        final Set<Range<Token>> fullRanges = new HashSet<>(localWrites.onlyFull().ranges());
 
         return parallelAllSSTableOperation(cfStore, new OneSSTableOperation()
         {
@@ -669,7 +688,7 @@ public class CompactionManager implements CompactionManagerMBean, ICompactionMan
             public void execute(LifecycleTransaction txn) throws IOException
             {
                 CleanupStrategy cleanupStrategy = CleanupStrategy.get(cfStore, allRanges, transientRanges, txn.onlyOne().isRepaired(), FBUtilities.nowInSeconds());
-                doCleanupOne(cfStore, txn, cleanupStrategy, replicas.ranges(), hasIndexes);
+                doCleanupOne(cfStore, txn, cleanupStrategy, allRanges, hasIndexes);
             }
         }, jobs, OperationType.CLEANUP);
     }
@@ -1297,7 +1316,7 @@ public class CompactionManager implements CompactionManagerMBean, ICompactionMan
     /* Used in tests. */
     public void disableAutoCompaction()
     {
-        for (String ksname : Schema.instance.distributedKeyspaces().names())
+        for (String ksname : Schema.instance.getKeyspaces())
         {
             for (ColumnFamilyStore cfs : Keyspace.open(ksname).getColumnFamilyStores())
                 cfs.disableAutoCompaction();
@@ -1426,10 +1445,9 @@ public class CompactionManager implements CompactionManagerMBean, ICompactionMan
         long totalkeysWritten = 0;
 
         long expectedBloomFilterSize = Math.max(cfs.metadata().params.minIndexInterval,
-                                               SSTableReader.getApproximateKeyCount(txn.originals()));
-        if (logger.isTraceEnabled())
-            logger.trace("Expected bloom filter size : {}", expectedBloomFilterSize);
+                                                SSTableReader.getApproximateKeyCount(txn.originals()));
 
+        logger.trace("Expected bloom filter size : {}", expectedBloomFilterSize);
         logger.info("Cleaning up {}", sstable);
 
         File compactionFileLocation = sstable.descriptor.directory;

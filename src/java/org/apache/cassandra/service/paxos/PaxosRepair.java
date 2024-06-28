@@ -42,7 +42,6 @@ import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.RequestFailureReason;
 import org.apache.cassandra.exceptions.UnavailableException;
-import org.apache.cassandra.gms.IGossiper;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
@@ -53,9 +52,12 @@ import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.net.RequestCallbackWithFailure;
 import org.apache.cassandra.repair.SharedContext;
+import org.apache.cassandra.schema.ReplicationParams;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.tcm.ClusterMetadata;
+import org.apache.cassandra.tcm.membership.NodeId;
 import org.apache.cassandra.utils.CassandraVersion;
 import org.apache.cassandra.utils.ExecutorUtils;
 import org.apache.cassandra.utils.FBUtilities;
@@ -286,7 +288,8 @@ public class PaxosRepair extends AbstractPaxosRepair
 
         public void run()
         {
-            Message<Request> message = Message.out(PAXOS2_REPAIR_REQ, new Request(partitionKey(), table));
+            Message<Request> message = Message.out(PAXOS2_REPAIR_REQ, new Request(partitionKey(), table), participants.isUrgent());
+
             for (int i = 0, size = participants.sizeOfPoll(); i < size ; ++i)
                 MessagingService.instance().sendWithCallback(message, participants.voter(i), this);
         }
@@ -544,7 +547,13 @@ public class PaxosRepair extends AbstractPaxosRepair
      */
     public static boolean hasSufficientLiveNodesForTopologyChange(Keyspace keyspace, Range<Token> range, Collection<InetAddressAndPort> liveEndpoints)
     {
-        return hasSufficientLiveNodesForTopologyChange(keyspace.getReplicationStrategy().getNaturalReplicasForToken(range.right).endpoints(),
+        ReplicationParams replication = keyspace.getMetadata().params.replication;
+        // Special case meta keyspace as it uses a custom partitioner/tokens, but the paxos table and repairs
+        // are based on the system partitioner
+        Collection<InetAddressAndPort> allEndpoints = replication.isMeta()
+                                                      ? ClusterMetadata.current().fullCMSMembers()
+                                                      : ClusterMetadata.current().placements.get(replication).reads.forRange(range).endpoints();
+        return hasSufficientLiveNodesForTopologyChange(allEndpoints,
                                                        liveEndpoints,
                                                        DatabaseDescriptor.getEndpointSnitch()::getDatacenter,
                                                        DatabaseDescriptor.paxoTopologyRepairNoDcChecks(),
@@ -657,9 +666,10 @@ public class PaxosRepair extends AbstractPaxosRepair
         return (version.major == 4 && version.minor > 0) || version.major > 4;
     }
 
-    static boolean validatePeerCompatibility(IGossiper gossiper, Replica peer)
+    static boolean validatePeerCompatibility(ClusterMetadata metadata, Replica peer)
     {
-        CassandraVersion version = gossiper.getReleaseVersion(peer.endpoint());
+        NodeId nodeId = metadata.directory.peerId(peer.endpoint());
+        CassandraVersion version = metadata.directory.version(nodeId).cassandraVersion;
         boolean result = validateVersionCompatibility(version);
         if (!result)
             logger.info("PaxosRepair isn't supported by {} on version {}", peer, version);
@@ -668,8 +678,9 @@ public class PaxosRepair extends AbstractPaxosRepair
 
     static boolean validatePeerCompatibility(SharedContext ctx, TableMetadata table, Range<Token> range)
     {
-        Participants participants = Participants.get(table, range.right, ConsistencyLevel.SERIAL, r -> ctx.failureDetector().isAlive(r.endpoint()));
-        return Iterables.all(participants.all, r -> validatePeerCompatibility(ctx.gossiper(), r));
+        ClusterMetadata metadata = ClusterMetadata.current();
+        Participants participants = Participants.get(metadata, table, range.right, ConsistencyLevel.SERIAL, r -> ctx.failureDetector().isAlive(r.endpoint()));
+        return Iterables.all(participants.all, (participant) -> validatePeerCompatibility(metadata, participant));
     }
 
     public static boolean validatePeerCompatibility(SharedContext ctx, TableMetadata table, Collection<Range<Token>> ranges)

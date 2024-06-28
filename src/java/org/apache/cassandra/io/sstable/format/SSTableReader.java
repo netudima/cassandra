@@ -345,7 +345,7 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
 
     public static SSTableReader open(SSTable.Owner owner, Descriptor desc, TableMetadataRef metadata)
     {
-        return open(owner, desc, null, metadata);
+        return open(owner, desc,  null, metadata);
     }
 
     public static SSTableReader open(SSTable.Owner owner, Descriptor descriptor, Set<Component> components, TableMetadataRef metadata)
@@ -393,7 +393,6 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
                                      boolean isOffline)
     {
         SSTableReaderLoadingBuilder<?, ?> builder = descriptor.getFormat().getReaderFactory().loadingBuilder(descriptor, metadata, components);
-
         return builder.build(owner, validate, !isOffline);
     }
 
@@ -535,7 +534,7 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
 
     public void setupOnline()
     {
-         owner().ifPresent(o -> setCrcCheckChance(o.getCrcCheckChance()));
+        owner().ifPresent(o -> setCrcCheckChance(o.getCrcCheckChance()));
     }
 
     /**
@@ -1376,8 +1375,7 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
         @Override
         public void tidy()
         {
-            if (logger.isTraceEnabled())
-                logger.trace("Running instance tidier for {} with setup {}", descriptor, setup);
+            logger.trace("Running instance tidier for {} with setup {}", descriptor, setup);
 
             // don't try to cleanup if the sstablereader was never fully constructed
             if (!setup)
@@ -1399,14 +1397,12 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
             {
                 public void run()
                 {
-                    if (logger.isTraceEnabled())
-                        logger.trace("Async instance tidier for {}, before barrier", descriptor);
+                    logger.trace("Async instance tidier for {}, before barrier", descriptor);
 
                     if (barrier != null)
                         barrier.await();
 
-                    if (logger.isTraceEnabled())
-                        logger.trace("Async instance tidier for {}, after barrier", descriptor);
+                    logger.trace("Async instance tidier for {}, after barrier", descriptor);
 
                     Throwable exceptions = null;
                     if (runOnClose != null) try
@@ -1439,8 +1435,7 @@ public abstract class SSTableReader extends SSTable implements UnfilteredSource,
                     if (exceptions != null)
                         JVMStabilityInspector.inspectThrowable(exceptions);
 
-                    if (logger.isTraceEnabled())
-                        logger.trace("Async instance tidier for {}, completed", descriptor);
+                    logger.trace("Async instance tidier for {}, completed", descriptor);
                 }
 
                 @Override

@@ -298,6 +298,7 @@ public final class HintsService implements HintsServiceMBean
         return catalog.stores()
                       .filter(HintsStore::hasFiles)
                       .map(HintsStore::getPendingHintsInfo)
+                      .filter(Objects::nonNull)
                       .collect(Collectors.toList());
     }
 

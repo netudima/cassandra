@@ -22,6 +22,7 @@ import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.utils.FBUtilities;
 
 public class TableStatsPrinter<T extends StatsHolder>
@@ -62,9 +63,9 @@ public class TableStatsPrinter<T extends StatsHolder>
                 // print each keyspace's information
                 out.println("Keyspace: " + keyspace.name);
                 out.println("\tRead Count: " + keyspace.readCount);
-                out.println("\tRead Latency: " + keyspace.readLatency() + " ms");
+                out.println("\tRead Latency: " + FBUtilities.prettyPrintLatency(keyspace.readLatency()));
                 out.println("\tWrite Count: " + keyspace.writeCount);
-                out.println("\tWrite Latency: " + keyspace.writeLatency() + " ms");
+                out.println("\tWrite Latency: " + FBUtilities.prettyPrintLatency(keyspace.writeLatency()));
                 out.println("\tPending Flushes: " + keyspace.pendingFlushes);
 
                 // print each table's information
@@ -74,18 +75,18 @@ public class TableStatsPrinter<T extends StatsHolder>
 
                 for (StatsTable table : tables)
                 {
-                    printStatsTable(table, table.tableName, "\t\t", out);
+                    printStatsTable(table, table.tableName, "\t\t", data.humanReadable, out);
                 }
                 out.println("----------------");
             }
         }
 
-        protected void printStatsTable(StatsTable table, String tableDisplayName, String indent, PrintStream out)
+        protected void printStatsTable(StatsTable table, String tableDisplayName, String indent, boolean humanReadable, PrintStream out)
         {
             out.println(indent + "Table" + (table.isIndex ? " (index): " : ": ") + tableDisplayName);
             out.println(indent + "SSTable count: " + table.sstableCount);
             out.println(indent + "Old SSTable count: " + table.oldSSTableCount);
-            out.println(indent + "Max SSTable size: " + FBUtilities.prettyPrintMemory(table.maxSSTableSize));
+            out.println(indent + "Max SSTable size: " + formatDataSize(table.maxSSTableSize, humanReadable));
             if (table.twcs != null)
                 out.println(indent + "SSTables Time Window: " + table.twcs);
             if (table.isLeveledSstable)
@@ -102,7 +103,7 @@ public class TableStatsPrinter<T extends StatsHolder>
 
             if (table.offHeapUsed)
                 out.println(indent + "Off heap memory used (total): " + table.offHeapMemoryUsedTotal);
-            out.printf(indent + "SSTable Compression Ratio: %01.5f%n", table.sstableCompressionRatio);
+            out.println(indent + "SSTable Compression Ratio: " + FBUtilities.prettyPrintRatio(table.sstableCompressionRatio));
             out.println(indent + "Number of partitions (estimate): " + table.numberOfPartitionsEstimate);
             out.println(indent + "Memtable cell count: " + table.memtableCellCount);
             out.println(indent + "Memtable data size: " + table.memtableDataSize);
@@ -112,21 +113,21 @@ public class TableStatsPrinter<T extends StatsHolder>
             out.println(indent + "Memtable switch count: " + table.memtableSwitchCount);
             out.println(indent + "Speculative retries: " + table.speculativeRetries);
             out.println(indent + "Local read count: " + table.localReadCount);
-            out.printf(indent + "Local read latency: %01.3f ms%n", table.localReadLatencyMs);
+            out.println(indent + "Local read latency: " + FBUtilities.prettyPrintLatency(table.localReadLatencyMs));
             out.println(indent + "Local write count: " + table.localWriteCount);
-            out.printf(indent + "Local write latency: %01.3f ms%n", table.localWriteLatencyMs);
+            out.println(indent + "Local write latency: " + FBUtilities.prettyPrintLatency(table.localWriteLatencyMs));
 
-            out.printf(indent + "Local read/write ratio: %01.5f%n", table.localReadWriteRatio);
+            out.println(indent + "Local read/write ratio: " + FBUtilities.prettyPrintRatio(table.localReadWriteRatio));
 
             out.println(indent + "Pending flushes: " + table.pendingFlushes);
             out.println(indent + "Percent repaired: " + table.percentRepaired);
 
-            out.println(indent +"Bytes repaired: " + FBUtilities.prettyPrintMemory(table.bytesRepaired));
-            out.println(indent +"Bytes unrepaired: " + FBUtilities.prettyPrintMemory(table.bytesUnrepaired));
-            out.println(indent +"Bytes pending repair: " + FBUtilities.prettyPrintMemory(table.bytesPendingRepair));
+            out.println(indent + "Bytes repaired: " + formatDataSize(table.bytesRepaired, humanReadable));
+            out.println(indent + "Bytes unrepaired: " + formatDataSize(table.bytesUnrepaired, humanReadable));
+            out.println(indent + "Bytes pending repair: " + formatDataSize(table.bytesPendingRepair, humanReadable));
 
             out.println(indent + "Bloom filter false positives: " + table.bloomFilterFalsePositives);
-            out.printf(indent + "Bloom filter false ratio: %01.5f%n", table.bloomFilterFalseRatio);
+            out.println(indent + "Bloom filter false ratio: " + FBUtilities.prettyPrintRatio(table.bloomFilterFalseRatio));
             out.println(indent + "Bloom filter space used: " + table.bloomFilterSpaceUsed);
 
             if (table.bloomFilterOffHeapUsed)
@@ -136,14 +137,16 @@ public class TableStatsPrinter<T extends StatsHolder>
             if (table.compressionMetadataOffHeapUsed)
                 out.println(indent + "Compression metadata off heap memory used: " + table.compressionMetadataOffHeapMemoryUsed);
 
-            out.println(indent + "Compacted partition minimum bytes: " + table.compactedPartitionMinimumBytes);
-            out.println(indent + "Compacted partition maximum bytes: " + table.compactedPartitionMaximumBytes);
-            out.println(indent + "Compacted partition mean bytes: " + table.compactedPartitionMeanBytes);
-            out.println(indent + "Average live cells per slice (last five minutes): " + table.averageLiveCellsPerSliceLastFiveMinutes);
+            out.println(indent + "Compacted partition minimum bytes: " + formatDataSize(table.compactedPartitionMinimumBytes, humanReadable));
+            out.println(indent + "Compacted partition maximum bytes: " + formatDataSize(table.compactedPartitionMaximumBytes, humanReadable));
+            out.println(indent + "Compacted partition mean bytes: " + formatDataSize(table.compactedPartitionMeanBytes, humanReadable));
+            out.println(indent + "Average live cells per slice (last five minutes): " +
+                        FBUtilities.prettyPrintAverage(table.averageLiveCellsPerSliceLastFiveMinutes));
             out.println(indent + "Maximum live cells per slice (last five minutes): " + table.maximumLiveCellsPerSliceLastFiveMinutes);
-            out.println(indent + "Average tombstones per slice (last five minutes): " + table.averageTombstonesPerSliceLastFiveMinutes);
+            out.println(indent + "Average tombstones per slice (last five minutes): " +
+                        FBUtilities.prettyPrintAverage(table.averageTombstonesPerSliceLastFiveMinutes));
             out.println(indent + "Maximum tombstones per slice (last five minutes): " + table.maximumTombstonesPerSliceLastFiveMinutes);
-            out.printf(indent + "Droppable tombstone ratio: %01.5f%n", table.droppableTombstoneRatio);
+            out.println(indent + "Droppable tombstone ratio: " + FBUtilities.prettyPrintRatio(table.droppableTombstoneRatio));
             if (table.isInCorrectLocation != null)
                 out.println(indent + "SSTables in correct location: " + table.isInCorrectLocation);
             if (table.topSizePartitions != null && !table.topSizePartitions.isEmpty())
@@ -164,6 +167,11 @@ public class TableStatsPrinter<T extends StatsHolder>
                     out.printf(indent + "  %-" + maxWidth + "s %s%n", tombstonecnt.getKey(), tombstonecnt.getValue());
             }
             out.println("");
+        }
+
+        private String formatDataSize(long bytes, boolean humanReadable)
+        {
+            return humanReadable ? FileUtils.stringifyFileSize(bytes) : Long.toString(bytes);
         }
     }
 
@@ -190,7 +198,7 @@ public class TableStatsPrinter<T extends StatsHolder>
             out.println("----------------");
             for (StatsTable table : tables)
             {
-                printStatsTable(table, table.keyspaceName + "." + table.tableName, "\t", out);
+                printStatsTable(table, table.keyspaceName + "." + table.tableName, "\t", data.humanReadable, out);
             }
             out.println("----------------");
         }

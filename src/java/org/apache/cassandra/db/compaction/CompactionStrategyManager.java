@@ -70,6 +70,7 @@ import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.notifications.INotification;
 import org.apache.cassandra.notifications.INotificationConsumer;
+import org.apache.cassandra.notifications.InitialSSTableAddedNotification;
 import org.apache.cassandra.notifications.SSTableAddedNotification;
 import org.apache.cassandra.notifications.SSTableDeletingNotification;
 import org.apache.cassandra.notifications.SSTableListChangedNotification;
@@ -176,7 +177,7 @@ public class CompactionStrategyManager implements INotificationConsumer
         holders = ImmutableList.of(transientRepairs, pendingRepairs, repaired, unrepaired);
 
         cfs.getTracker().subscribe(this);
-        logger.trace("{} subscribed to the data tracker.", this);
+        logger.trace("Compaction manager for {}.{} subscribed to the data tracker.", cfs.keyspace.getName(), cfs.name);
         this.cfs = cfs;
         this.compactionLogger = new CompactionLogger(cfs, this);
         this.boundariesSupplier = boundariesSupplier;
@@ -902,6 +903,11 @@ public class CompactionStrategyManager implements INotificationConsumer
             if (notification instanceof SSTableAddedNotification)
             {
                 SSTableAddedNotification flushedNotification = (SSTableAddedNotification) notification;
+                handleFlushNotification(flushedNotification.added);
+            }
+            else if (notification instanceof InitialSSTableAddedNotification)
+            {
+                InitialSSTableAddedNotification flushedNotification = (InitialSSTableAddedNotification) notification;
                 handleFlushNotification(flushedNotification.added);
             }
             else if (notification instanceof SSTableListChangedNotification)

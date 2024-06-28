@@ -536,6 +536,9 @@ public interface StorageServiceMBean extends NotificationEmitter
      * enpoint that had it) from the ring
      */
     public void removeNode(String token);
+    public void removeNode(String token, boolean force);
+
+    public void assassinateEndpoint(String addr);
 
     /**
      * Get the status of a token removal.
@@ -665,7 +668,8 @@ public interface StorageServiceMBean extends NotificationEmitter
     // to determine if initialization has completed
     public boolean isInitialized();
 
-    public void stopNativeTransport();
+    @Deprecated(since = "5.0") public default void stopNativeTransport() { stopNativeTransport(false); }
+    public void stopNativeTransport(boolean force);
     public void startNativeTransport();
     public boolean isNativeTransportRunning();
     public void enableNativeTransportOldProtocolVersions();
@@ -1063,6 +1067,7 @@ public interface StorageServiceMBean extends NotificationEmitter
     public boolean resumeBootstrap();
 
     public String getBootstrapState();
+    void abortBootstrap(String nodeId, String endpoint);
 
     /** Gets the concurrency settings for processing stages*/
     static class StageConcurrency implements Serializable
@@ -1158,6 +1163,7 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     @Deprecated(since = "4.0")
     public Map<String, Set<InetAddress>> getOutstandingSchemaVersions();
+    @Deprecated(since = "CEP-21")
     public Map<String, Set<String>> getOutstandingSchemaVersionsWithPort();
 
     // see CASSANDRA-3200
@@ -1262,4 +1268,20 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     public void setSkipStreamDiskSpaceCheck(boolean value);
     public boolean getSkipStreamDiskSpaceCheck();
+
+    double getNativeTransportQueueMaxItemAgeThreshold();
+    void setNativeTransportQueueMaxItemAgeThreshold(double threshold);
+
+    long getNativeTransportMinBackoffOnQueueOverloadInMillis();
+    long getNativeTransportMaxBackoffOnQueueOverloadInMillis();
+    void setNativeTransportBackoffOnQueueOverloadInMillis(long min, long max);
+
+    boolean getNativeTransportThrowOnOverload();
+    void setNativeTransportThrowOnOverload(boolean throwOnOverload);
+
+    long getNativeTransportTimeoutMillis();
+    void setNativeTransportTimeoutMillis(long deadlineMillis);
+
+    boolean getEnforceNativeDeadlineForHints();
+    void setEnforceNativeDeadlineForHints(boolean value);
 }

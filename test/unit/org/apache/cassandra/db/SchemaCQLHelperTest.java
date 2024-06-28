@@ -23,7 +23,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Files;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,7 +31,6 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 import org.apache.cassandra.db.marshal.*;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.index.internal.CassandraIndex;
 import org.apache.cassandra.index.sasi.SASIIndex;
 import org.apache.cassandra.schema.*;
@@ -55,12 +53,6 @@ import static org.junit.Assert.assertThat;
 
 public class SchemaCQLHelperTest extends CQLTester
 {
-    @Before
-    public void defineSchema() throws ConfigurationException
-    {
-        SchemaLoader.prepareServer();
-    }
-
     @Test
     public void testUserTypesCQL()
     {
@@ -366,9 +358,9 @@ public class SchemaCQLHelperTest extends CQLTester
 
         ColumnFamilyStore cfs = Keyspace.open(keyspace).getColumnFamilyStore(table);
 
-        assertEquals(ImmutableList.of("CREATE INDEX \"indexName\" ON cql_test_keyspace_3.test_table_3 (values(reg1));",
-                                      "CREATE INDEX \"indexName2\" ON cql_test_keyspace_3.test_table_3 (keys(reg1));",
-                                      "CREATE INDEX \"indexName3\" ON cql_test_keyspace_3.test_table_3 (entries(reg1));",
+        assertEquals(ImmutableList.of("CREATE INDEX \"indexName\" ON cql_test_keyspace_3.test_table_3 (values(reg1)) USING 'legacy_local_table';",
+                                      "CREATE INDEX \"indexName2\" ON cql_test_keyspace_3.test_table_3 (keys(reg1)) USING 'legacy_local_table';",
+                                      "CREATE INDEX \"indexName3\" ON cql_test_keyspace_3.test_table_3 (entries(reg1)) USING 'legacy_local_table';",
                                       "CREATE CUSTOM INDEX \"indexName4\" ON cql_test_keyspace_3.test_table_3 (entries(reg1)) USING 'org.apache.cassandra.index.sasi.SASIIndex';",
                                       "CREATE CUSTOM INDEX \"indexName5\" ON cql_test_keyspace_3.test_table_3 (entries(reg1)) USING 'org.apache.cassandra.index.sasi.SASIIndex' WITH OPTIONS = {'is_literal': 'false'};"),
                      SchemaCQLHelper.getIndexesAsCQL(cfs.metadata(), false).collect(Collectors.toList()));
@@ -450,7 +442,7 @@ public class SchemaCQLHelperTest extends CQLTester
         assertThat(schema, containsString(
             "CREATE " + (isIndexLegacy ? "" : "CUSTOM ") +
             "INDEX IF NOT EXISTS " + tableName + "_reg2_idx ON " + keyspace() + '.' + tableName + " (reg2)" +
-            (isIndexLegacy ? "" : " USING '" + DatabaseDescriptor.getDefaultSecondaryIndex() + "'") + ";"));
+            (" USING '" + (isIndexLegacy ? CassandraIndex.NAME : DatabaseDescriptor.getDefaultSecondaryIndex()) + "'") + ";"));
 
         JsonNode manifest = JsonUtils.JSON_OBJECT_MAPPER.readTree(cfs.getDirectories().getSnapshotManifestFile(SNAPSHOT).toJavaIOFile());
         JsonNode files = manifest.get("files");

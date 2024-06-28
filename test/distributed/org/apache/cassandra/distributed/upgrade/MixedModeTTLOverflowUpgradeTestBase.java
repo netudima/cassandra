@@ -24,6 +24,7 @@ import java.util.stream.Stream;
 
 import org.apache.cassandra.cql3.Attributes;
 import org.apache.cassandra.distributed.UpgradeableCluster;
+import org.apache.cassandra.distributed.api.Feature;
 import org.apache.cassandra.distributed.api.ICoordinator;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.StorageCompatibilityMode;
@@ -81,7 +82,10 @@ public abstract class MixedModeTTLOverflowUpgradeTestBase extends UpgradeTestBas
         new TestCase()
                 .nodes(2)
                 .nodesToUpgradeOrdered(1, 2)
-                .upgradesToCurrentFrom(v40)
+                // all upgrades from v40 to current, excluding v50 -> v51
+                .singleUpgradeToCurrentFrom(v40)
+                .singleUpgradeToCurrentFrom(v41)
+                .withConfig(c -> c.with(Feature.GOSSIP).set("storage_compatibility_mode", "CASSANDRA_4"))
                 .setup(cluster -> {
                     cluster.schemaChange(String.format("CREATE TABLE %s.%s (k int PRIMARY KEY, v1 int, v2 int)", KEYSPACE, T_REGULAR));
                     cluster.schemaChange(String.format("CREATE TABLE %s.%s (k int, c int, v1 int, v2 int, PRIMARY KEY (k, c))", KEYSPACE, T_CLUST));

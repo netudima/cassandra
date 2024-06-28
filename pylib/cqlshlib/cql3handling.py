@@ -23,8 +23,6 @@ simple_cql_types = {'ascii', 'bigint', 'blob', 'boolean', 'counter', 'date', 'de
                     'varint'}
 simple_cql_types.difference_update(('set', 'map', 'list', 'vector'))
 
-cqldocs = helptopics.CQL3HelpTopics()
-
 
 class UnexpectedTableStructure(UserWarning):
 
@@ -36,8 +34,9 @@ class UnexpectedTableStructure(UserWarning):
 
 
 SYSTEM_KEYSPACES = ('system', 'system_schema', 'system_traces', 'system_auth', 'system_distributed', 'system_views',
-                    'system_virtual_schema')
-NONALTERBALE_KEYSPACES = ('system', 'system_schema', 'system_views', 'system_virtual_schema')
+                    'system_metrics', 'system_virtual_schema', 'system_cluster_metadata')
+NONALTERBALE_KEYSPACES = ('system', 'system_schema', 'system_views', 'system_metrics', 'system_virtual_schema',
+                          'system_cluster_metadata')
 
 
 class Cql3ParsingRuleSet(CqlParsingRuleSet):
@@ -304,6 +303,7 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                             | <alterRoleStatement>
                             | <dropRoleStatement>
                             | <listRolesStatement>
+                            | <listSuperUsersStatement>
                             ;
 
 <authorizationStatement> ::= <grantStatement>
@@ -743,6 +743,7 @@ syntax_rules += r'''
                                  ( "," [rel_tokname]=<cident> )*
                              ")" ("=" | "<" | ">" | "<=" | ">=") <tokenDefinition>
              | [rel_lhs]=<cident> "IN" "(" <term> ( "," <term> )* ")"
+             | [rel_lhs]=<cident> "BETWEEN" <term> "AND" <term>
              ;
 <selectClause> ::= "DISTINCT"? <selector> ("AS" <cident>)? ("," <selector> ("AS" <cident>)?)*
                  | "*"
@@ -1530,6 +1531,9 @@ syntax_rules += r'''
 
 <listRolesStatement> ::= "LIST" "ROLES"
                               ( "OF" <rolename> )? "NORECURSIVE"?
+                       ;
+
+<listSuperUsersStatement> ::= "LIST" "SUPERUSERS"
                        ;
 '''
 

@@ -31,7 +31,6 @@ import java.util.Set;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -54,12 +53,14 @@ import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.PathUtils;
 import org.apache.cassandra.locator.InetAddressAndPort;
-import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.service.CacheService;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.tcm.ClusterMetadata;
+import org.apache.cassandra.tcm.membership.NodeAddresses;
+import org.apache.cassandra.tcm.membership.NodeState;
+import org.apache.cassandra.tcm.transformations.Register;
+import org.apache.cassandra.tcm.transformations.UnsafeJoin;
 import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
 
 import static org.apache.lucene.codecs.CodecUtil.FOOTER_MAGIC;
 import static org.apache.lucene.codecs.CodecUtil.writeBEInt;
@@ -70,9 +71,11 @@ import static org.junit.Assert.assertTrue;
 
 public class ImportTest extends CQLTester
 {
-    @After
-    public void afterTest()
+
+    @Override
+    public void afterTest() throws Throwable
     {
+        super.afterTest();
         SSTableReader.resetTidying();
     }
 
@@ -292,8 +295,6 @@ public class ImportTest extends CQLTester
     @Test
     public void testGetCorrectDirectory() throws Throwable
     {
-        TokenMetadata metadata = StorageService.instance.getTokenMetadata();
-        metadata.updateNormalTokens(BootStrapper.getRandomTokens(metadata, 10), FBUtilities.getBroadcastAddressAndPort());
         createTable("create table %s (id int primary key, d int)");
         getCurrentColumnFamilyStore().disableAutoCompaction();
 
@@ -434,38 +435,35 @@ public class ImportTest extends CQLTester
 
         getCurrentColumnFamilyStore().clearUnsafe();
 
-        TokenMetadata tmd = StorageService.instance.getTokenMetadata();
+        InetAddressAndPort ep1 = InetAddressAndPort.getByName("127.0.0.1");
+        InetAddressAndPort ep2 = InetAddressAndPort.getByName("127.0.0.2");
+        InetAddressAndPort ep3 = InetAddressAndPort.getByName("127.0.0.3");
 
-        tmd.updateNormalTokens(BootStrapper.getRandomTokens(tmd, 15), InetAddressAndPort.getByName("127.0.0.1"));
-        tmd.updateNormalTokens(BootStrapper.getRandomTokens(tmd, 15), InetAddressAndPort.getByName("127.0.0.2"));
-        tmd.updateNormalTokens(BootStrapper.getRandomTokens(tmd, 15), InetAddressAndPort.getByName("127.0.0.3"));
-
+        // ep1 is registered during fixture setup
+        assertEquals(NodeState.JOINED, ClusterMetadata.current().directory.peerState(ep1));
+        UnsafeJoin.unsafeJoin(Register.register(new NodeAddresses(ep2)),
+                              BootStrapper.getRandomTokens(ClusterMetadata.current(), 5));
+        UnsafeJoin.unsafeJoin(Register.register(new NodeAddresses(ep3)),
+                              BootStrapper.getRandomTokens(ClusterMetadata.current(), 5));
 
         File backupdir = moveToBackupDir(sstables);
-        try
-        {
-            SSTableImporter.Options options = SSTableImporter.Options.options(backupdir.toString()).verifySSTables(true).verifyTokens(true).build();
-            SSTableImporter importer = new SSTableImporter(getCurrentColumnFamilyStore());
-            List<String> failed = importer.importNewSSTables(options);
-            assertEquals(Collections.singletonList(backupdir.toString()), failed);
 
-            // verify that we check the tokens if verifySSTables == false but verifyTokens == true:
-            options = SSTableImporter.Options.options(backupdir.toString()).verifySSTables(false).verifyTokens(true).build();
-            importer = new SSTableImporter(getCurrentColumnFamilyStore());
-            failed = importer.importNewSSTables(options);
-            assertEquals(Collections.singletonList(backupdir.toString()), failed);
+        SSTableImporter.Options options = SSTableImporter.Options.options(backupdir.toString()).verifySSTables(true).verifyTokens(true).build();
+        SSTableImporter importer = new SSTableImporter(getCurrentColumnFamilyStore());
+        List<String> failed = importer.importNewSSTables(options);
+        assertEquals(Collections.singletonList(backupdir.toString()), failed);
 
-            // and that we can import with it disabled:
-            options = SSTableImporter.Options.options(backupdir.toString()).verifySSTables(true).verifyTokens(false).build();
-            importer = new SSTableImporter(getCurrentColumnFamilyStore());
-            failed = importer.importNewSSTables(options);
-            assertTrue(failed.isEmpty());
+        // verify that we check the tokens if verifySSTables == false but verifyTokens == true:
+        options = SSTableImporter.Options.options(backupdir.toString()).verifySSTables(false).verifyTokens(true).build();
+        importer = new SSTableImporter(getCurrentColumnFamilyStore());
+        failed = importer.importNewSSTables(options);
+        assertEquals(Collections.singletonList(backupdir.toString()), failed);
 
-        }
-        finally
-        {
-            tmd.clearUnsafe();
-        }
+        // and that we can import with it disabled:
+        options = SSTableImporter.Options.options(backupdir.toString()).verifySSTables(true).verifyTokens(false).build();
+        importer = new SSTableImporter(getCurrentColumnFamilyStore());
+        failed = importer.importNewSSTables(options);
+        assertTrue(failed.isEmpty());
     }
 
     @Test
@@ -478,29 +476,24 @@ public class ImportTest extends CQLTester
         Set<SSTableReader> sstables = getCurrentColumnFamilyStore().getLiveSSTables();
 
         getCurrentColumnFamilyStore().clearUnsafe();
+        InetAddressAndPort ep1 = InetAddressAndPort.getByName("127.0.0.1");
+        InetAddressAndPort ep2 = InetAddressAndPort.getByName("127.0.0.2");
+        InetAddressAndPort ep3 = InetAddressAndPort.getByName("127.0.0.3");
 
-        TokenMetadata tmd = StorageService.instance.getTokenMetadata();
-
-        tmd.updateNormalTokens(BootStrapper.getRandomTokens(tmd, 5), InetAddressAndPort.getByName("127.0.0.1"));
-        tmd.updateNormalTokens(BootStrapper.getRandomTokens(tmd, 5), InetAddressAndPort.getByName("127.0.0.2"));
-        tmd.updateNormalTokens(BootStrapper.getRandomTokens(tmd, 5), InetAddressAndPort.getByName("127.0.0.3"));
-
-
+        // ep1 is registered during fixture setup
+        assertEquals(NodeState.JOINED, ClusterMetadata.current().directory.peerState(ep1));
+        UnsafeJoin.unsafeJoin(Register.register(new NodeAddresses(ep2)),
+                              BootStrapper.getRandomTokens(ClusterMetadata.current(), 5));
+        UnsafeJoin.unsafeJoin(Register.register(new NodeAddresses(ep3)),
+                              BootStrapper.getRandomTokens(ClusterMetadata.current(), 5));
         File backupdir = moveToBackupDir(sstables);
-        try
-        {
-            SSTableImporter.Options options = SSTableImporter.Options.options(backupdir.toString())
-                                                                                     .verifySSTables(true)
-                                                                                     .verifyTokens(true)
-                                                                                     .extendedVerify(true).build();
-            SSTableImporter importer = new SSTableImporter(getCurrentColumnFamilyStore());
-            List<String> failedDirectories = importer.importNewSSTables(options);
-            assertEquals(Collections.singletonList(backupdir.toString()), failedDirectories);
-        }
-        finally
-        {
-            tmd.clearUnsafe();
-        }
+        SSTableImporter.Options options = SSTableImporter.Options.options(backupdir.toString())
+                                                                                 .verifySSTables(true)
+                                                                                 .verifyTokens(true)
+                                                                                 .extendedVerify(true).build();
+        SSTableImporter importer = new SSTableImporter(getCurrentColumnFamilyStore());
+        List<String> failedDirectories = importer.importNewSSTables(options);
+        assertEquals(Collections.singletonList(backupdir.toString()), failedDirectories);
     }
 
 
@@ -782,7 +775,7 @@ public class ImportTest extends CQLTester
         try
         {
             schemaChange(String.format("CREATE TABLE %s.%s (id int primary key, d int)", KEYSPACE, "sai_test"));
-            createIndexAndWait(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"), "idx1");
+            schemaChange(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"));
 
             for (int i = 0; i < 10; i++)
                 execute(String.format("INSERT INTO %s.%s (id, d) values (?, ?)", KEYSPACE, "sai_test"), i, i);
@@ -870,7 +863,7 @@ public class ImportTest extends CQLTester
 
             // create index and load sstables, they will be without indexes (because we created
             // data when index was not created yet)
-            createIndexAndWait(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"),  "idx1");
+            schemaChange(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"));
 
             SSTableImporter importer = new SSTableImporter(cfs);
             SSTableImporter.Options options = SSTableImporter.Options.options(backupDir.toString())
@@ -898,7 +891,7 @@ public class ImportTest extends CQLTester
         try
         {
             schemaChange(String.format("CREATE TABLE %s.%s (id int primary key, d int)", KEYSPACE, "sai_test"));
-            createIndexAndWait(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"), "idx1");
+            schemaChange(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"));
 
             for (int i = 0; i < 10; i++)
                 execute(String.format("INSERT INTO %s.%s (id, d) values (?, ?)", KEYSPACE, "sai_test"), i, i);
@@ -954,7 +947,7 @@ public class ImportTest extends CQLTester
         try
         {
             schemaChange(String.format("CREATE TABLE %s.%s (id int primary key, d int)", KEYSPACE, "sai_test"));
-            createIndexAndWait(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"), "idx1");
+            schemaChange(String.format("CREATE INDEX idx1 ON %s.%s (d) USING 'sai'", KEYSPACE, "sai_test"));
 
             // no data in indexed column = empty index
             for (int i = 0; i < 10; i++)
@@ -989,14 +982,7 @@ public class ImportTest extends CQLTester
     {
         public MockCFS(ColumnFamilyStore cfs, Directories dirs)
         {
-            super(cfs.keyspace, cfs.getTableName(), Util.newSeqGen(), cfs.metadata, dirs, false, false, true);
+            super(cfs.keyspace, cfs.getTableName(), Util.newSeqGen(), cfs.metadata.get(), dirs, false, false);
         }
     }
-
-    private void createIndexAndWait(String query, String indexName)
-    {
-        schemaChange(query);
-        waitForIndexQueryable(KEYSPACE, indexName);
-    }
-
 }

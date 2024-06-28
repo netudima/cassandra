@@ -25,7 +25,6 @@ import java.util.stream.Collectors;
 import com.google.common.collect.ImmutableList;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.datastax.driver.core.ResultSet;
@@ -38,18 +37,14 @@ import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.security.SSLFactory;
 import org.yaml.snakeyaml.introspector.Property;
 
+import static org.apache.cassandra.config.EncryptionOptions.ClientAuth.REQUIRED;
+
 public class SettingsTableTest extends CQLTester
 {
     private static final String KS_NAME = "vts";
 
     private Config config;
     private SettingsTable table;
-
-    @BeforeClass
-    public static void setUpClass()
-    {
-        CQLTester.setUpClass();
-    }
 
     @Before
     public void config()
@@ -208,7 +203,7 @@ public class SettingsTableTest extends CQLTester
 
         // name doesn't match yaml
         check(pre + "client_auth", "false");
-        config.server_encryption_options = config.server_encryption_options.withRequireClientAuth(true);
+        config.server_encryption_options = config.server_encryption_options.withRequireClientAuth(REQUIRED);
         check(pre + "client_auth", "true");
 
         // name doesn't match yaml

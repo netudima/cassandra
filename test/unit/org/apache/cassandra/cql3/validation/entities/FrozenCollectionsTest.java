@@ -26,7 +26,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import org.apache.cassandra.ServerTestUtils;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.cql3.restrictions.StatementRestrictions;
@@ -38,6 +37,7 @@ import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
+import static org.apache.cassandra.ServerTestUtils.daemonInitialization;
 import static org.junit.Assert.assertEquals;
 
 public class FrozenCollectionsTest extends CQLTester
@@ -45,10 +45,9 @@ public class FrozenCollectionsTest extends CQLTester
     @BeforeClass
     public static void setUpClass()     // overrides CQLTester.setUpClass()
     {
-        ServerTestUtils.daemonInitialization();
+        daemonInitialization();
         // Selecting partitioner for a table is not exposed on CREATE TABLE.
         StorageService.instance.setPartitionerUnsafe(ByteOrderedPartitioner.instance);
-
         prepareServer();
     }
 
@@ -863,7 +862,8 @@ public class FrozenCollectionsTest extends CQLTester
                              "SELECT * FROM %s WHERE c CONTAINS KEY ?", 1);
 
         // normal indexes on frozen collections don't support CONTAINS or CONTAINS KEY
-        assertInvalidMessage("Clustering columns can only be restricted with CONTAINS with a secondary index or filtering",
+        assertInvalidMessage("Clustering column restrictions require the use of secondary indices or" +
+                             " filtering for map-element restrictions and for the following operators: CONTAINS, CONTAINS KEY, LIKE, ANN",
                              "SELECT * FROM %s WHERE b CONTAINS ?", 1);
 
         assertRows(execute("SELECT * FROM %s WHERE b CONTAINS ? ALLOW FILTERING", 1),

@@ -77,12 +77,12 @@ public class PaxosStartPrepareCleanup extends AsyncFuture<PaxosCleanupHistory> i
      * prepare message to prevent racing with gossip dissemination and guarantee that every repair participant is aware
      * of the pending ring change during repair.
      */
-    public static PaxosStartPrepareCleanup prepare(SharedContext ctx, TableId tableId, Collection<InetAddressAndPort> endpoints, EndpointState localEpState, Collection<Range<Token>> ranges)
+    public static PaxosStartPrepareCleanup prepare(SharedContext ctx, TableId tableId, Collection<InetAddressAndPort> endpoints, EndpointState localEpState, Collection<Range<Token>> ranges, boolean isUrgent)
     {
         PaxosStartPrepareCleanup callback = new PaxosStartPrepareCleanup(tableId, endpoints);
         synchronized (callback)
         {
-            Message<Request> message = Message.out(PAXOS2_CLEANUP_START_PREPARE_REQ, new Request(tableId, localEpState, ranges));
+            Message<Request> message = Message.out(PAXOS2_CLEANUP_START_PREPARE_REQ, new Request(tableId, localEpState, ranges), isUrgent);
             for (InetAddressAndPort endpoint : endpoints)
                 ctx.messaging().sendWithCallback(message, endpoint, callback);
         }
@@ -128,8 +128,6 @@ public class PaxosStartPrepareCleanup extends AsyncFuture<PaxosCleanupHistory> i
             //       (which currently drops some migration tasks on the floor).
             //       Note it would be fine for us to fail to complete the migration task and simply treat this response as a failure/timeout.
         }
-        // even if we have th latest gossip info, wait until pending range calculations are complete
-        ctx.pendingRangeCalculator().blockUntilFinished();
     }
 
     public static class Request

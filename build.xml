@@ -33,7 +33,7 @@
     <property name="debuglevel" value="source,lines,vars"/>
 
     <!-- default version and SCM information -->
-    <property name="base.version" value="5.0-beta2"/>
+    <property name="base.version" value="5.1"/>
     <property name="scm.connection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
     <property name="scm.developerConnection" value="scm:https://gitbox.apache.org/repos/asf/cassandra.git"/>
     <property name="scm.url" value="https://gitbox.apache.org/repos/asf?p=cassandra.git"/>
@@ -89,6 +89,7 @@
     <property name="test.simulator-asm.src" value="${test.dir}/simulator/asm"/>
     <property name="test.simulator-bootstrap.src" value="${test.dir}/simulator/bootstrap"/>
     <property name="test.simulator-test.src" value="${test.dir}/simulator/test"/>
+    <property name="test.harry.src" value="${test.dir}/harry/main"/>
     <property name="test.driver.connection_timeout_ms" value="10000"/>
     <property name="test.driver.read_timeout_ms" value="24000"/>
     <property name="test.jvm.args" value="" />
@@ -424,7 +425,7 @@
 
     <target name="realclean" depends="clean" description="Remove the entire build directory and all downloaded artifacts">
         <delete>
-          <fileset dir="${build.lib}" excludes="cassandra-driver-internal-only-*,puresasl-internal-only-*"/>
+          <fileset dir="${build.lib}" excludes="cassandra-driver-internal-only-*,puresasl-internal-only-*,harry-*"/>
         </delete>
         <delete dir="${build.dir}" />
         <delete dir="${doc.dir}/build" />
@@ -1045,6 +1046,7 @@
      <src path="${test.simulator-asm.src}"/>
      <src path="${test.simulator-bootstrap.src}"/>
      <src path="${test.simulator-test.src}"/>
+     <src path="${test.harry.src}"/>
      <compilerarg line="${jdk11plus-javac-exports}"/>
     </javac>
 
@@ -1993,6 +1995,10 @@
   <classpathentry kind="src" path="conf" including="hotspot_compiler"/>
   <classpathentry kind="src" output="${test.classes}" path="test/unit"/>
   <classpathentry kind="src" output="${test.classes}" path="test/long"/>
+  <classpathentry kind="src" output="${test.classes}" path="test/microbench"/>
+  <classpathentry kind="src" output="${test.classes}" path="test/memory"/>
+  <classpathentry kind="src" output="${test.classes}" path="test/burn"/>
+  <classpathentry kind="src" output="${test.classes}" path="test/anttasks"/>
   <classpathentry kind="src" output="${test.classes}" path="test/distributed"/>
   <classpathentry kind="src" output="${test.classes}" path="test/simulator/asm"/>
   <classpathentry kind="src" output="${test.classes}" path="test/simulator/main"/>

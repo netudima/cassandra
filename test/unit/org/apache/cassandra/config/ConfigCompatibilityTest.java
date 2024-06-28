@@ -96,7 +96,15 @@ public class ConfigCompatibilityTest
                                                                  .add("commitlog_periodic_queue_size")
                                                                  .build();
 
-    private static final Set<String> ALLOW_LIST = Sets.union(REMOVED_IN_40, REMOVED_IN_50);
+    private static final Set<String> REMOVED_IN_51 = ImmutableSet.<String>builder()
+                                                                 .add("native_transport_port_ssl")
+                                                                 .build();
+
+    private static final Set<String> ALLOW_LIST = ImmutableSet.<String>builder()
+                                                              .addAll(REMOVED_IN_40)
+                                                              .addAll(REMOVED_IN_50)
+                                                              .addAll(REMOVED_IN_51)
+                                                              .build();
 
     private static final Set<String> EXPECTED_FOR_50 = ImmutableSet.<String>builder()
                                                                    // Switched to a parameterized class that can construct from a bare string
@@ -104,6 +112,7 @@ public class ConfigCompatibilityTest
                                                                    .add("authenticator types do not match; org.apache.cassandra.config.ParameterizedClass != java.lang.String")
                                                                    .add("Property internode_authenticator used to be a value-type, but now is nested type class org.apache.cassandra.config.ParameterizedClass")
                                                                    .add("Property authenticator used to be a value-type, but now is nested type class org.apache.cassandra.config.ParameterizedClass")
+                                                                   .add("require_client_auth types do not match; java.lang.String != java.lang.Boolean")
                                                                    .build();
 
     /**
@@ -145,8 +154,8 @@ public class ConfigCompatibilityTest
     @Test
     public void diff_5_0() throws IOException
     {
-        diff(TEST_DIR + "/version=5.0-alpha1.yml", ImmutableSet.<String>builder()
-                                                               .build(), ImmutableSet.of());
+        diff(TEST_DIR + "/version=5.0-alpha1.yml", ImmutableSet.<String>builder().addAll(REMOVED_IN_51)
+                                                               .build(), EXPECTED_FOR_50);
     }
 
     private void diff(String original, Set<String> ignore, Set<String> expectedErrors) throws IOException

@@ -233,7 +233,7 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
 
                 if (!rowProcessingNeeded())
                     return null;
-
+                
                 Columns statics = Columns.NONE;
                 Columns regulars = Columns.NONE;
                 for (int i=0, isize=versions.size(); i<isize; i++)
@@ -636,6 +636,7 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
 
     private class PaxosPurger extends Transformation<UnfilteredRowIterator>
     {
+
         private final long nowInSec;
         private final long paxosPurgeGraceMicros = DatabaseDescriptor.getPaxosPurgeGrace(MICROSECONDS);
         private final Map<TableId, PaxosRepairHistory.Searcher> tableIdToHistory = new HashMap<>();

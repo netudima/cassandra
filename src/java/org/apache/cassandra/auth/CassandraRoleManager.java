@@ -18,7 +18,15 @@
 package org.apache.cassandra.auth;
 
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -36,23 +44,31 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.schema.SchemaConstants;
-import org.apache.cassandra.cql3.*;
+import org.apache.cassandra.cql3.CQLStatement;
+import org.apache.cassandra.cql3.QueryOptions;
+import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.exceptions.*;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.exceptions.RequestExecutionException;
+import org.apache.cassandra.exceptions.RequestValidationException;
+import org.apache.cassandra.exceptions.UnauthorizedException;
+import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.StorageProxy;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.tcm.ClusterMetadata;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.NoSpamLogger;
 import org.mindrot.jbcrypt.BCrypt;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.AUTH_BCRYPT_GENSALT_LOG2_ROUNDS;
 import static org.apache.cassandra.service.QueryState.forInternalCalls;
-import static org.apache.cassandra.utils.Clock.Global.nanoTime;
 
 /**
  * Responsible for the creation, maintenance and deletion of roles
@@ -136,18 +152,31 @@ public class CassandraRoleManager implements IRoleManager
     public CassandraRoleManager()
     {
         supportedOptions = DatabaseDescriptor.getAuthenticator() instanceof PasswordAuthenticator
-                         ? ImmutableSet.of(Option.LOGIN, Option.SUPERUSER, Option.PASSWORD, Option.HASHED_PASSWORD)
-                         : ImmutableSet.of(Option.LOGIN, Option.SUPERUSER);
+                           ? ImmutableSet.of(Option.LOGIN, Option.SUPERUSER, Option.PASSWORD, Option.HASHED_PASSWORD)
+                           : ImmutableSet.of(Option.LOGIN, Option.SUPERUSER);
         alterableOptions = DatabaseDescriptor.getAuthenticator() instanceof PasswordAuthenticator
-                         ? ImmutableSet.of(Option.PASSWORD, Option.HASHED_PASSWORD)
-                         : ImmutableSet.<Option>of();
+                           ? ImmutableSet.of(Option.PASSWORD, Option.HASHED_PASSWORD)
+                           : ImmutableSet.<Option>of();
     }
 
     @Override
-    public void setup()
+    public void setup(boolean asyncRoleSetup)
     {
         loadRoleStatement();
         loadIdentityStatement();
+        if (!asyncRoleSetup)
+        {
+            try
+            {
+                // Try to set up synchronously
+                setupDefaultRole();
+                return;
+            }
+            catch (Throwable t)
+            {
+                // We tried to execute the task in a sync way, but failed. Try asynchronous setup.
+            }
+        }
         scheduleSetupTask(() -> {
             setupDefaultRole();
             return null;
@@ -417,7 +446,7 @@ public class CassandraRoleManager implements IRoleManager
      */
     private static void setupDefaultRole()
     {
-        if (StorageService.instance.getTokenMetadata().sortedTokens().isEmpty())
+        if (ClusterMetadata.current().tokenMap.tokens().isEmpty())
             throw new IllegalStateException("CassandraRoleManager skipped default role setup: no known tokens in ring");
 
         try
@@ -461,7 +490,7 @@ public class CassandraRoleManager implements IRoleManager
     {
         // The delay is to give the node a chance to see its peers before attempting the operation
         ScheduledExecutors.optionalTasks.scheduleSelfRecurring(() -> {
-            if (!StorageProxy.isSafeToPerformRead())
+            if (!StorageProxy.hasJoined())
             {
                 logger.trace("Setup task may not run due to it not being safe to perform reads... rescheduling");
                 scheduleSetupTask(setupTask);
@@ -487,7 +516,7 @@ public class CassandraRoleManager implements IRoleManager
         }
         catch (RequestValidationException e)
         {
-            throw new AssertionError(e); // not supposed to happen
+            throw new AssertionError(e + " " + FBUtilities.getJustLocalAddress()); // not supposed to happen
         }
     }
 
@@ -678,7 +707,7 @@ public class CassandraRoleManager implements IRoleManager
     @VisibleForTesting
     ResultMessage.Rows select(SelectStatement statement, QueryOptions options)
     {
-        return statement.execute(forInternalCalls(), options, nanoTime());
+        return statement.execute(forInternalCalls(), options, Dispatcher.RequestTime.forImmediateExecution());
     }
 
     @Override

@@ -60,34 +60,36 @@ public class BlockingPartitionRepair
         extends AsyncFuture<Object> implements RequestCallback<Object>
 {
     private final DecoratedKey key;
-    private final ReplicaPlan.ForWrite writePlan;
+    private final ReplicaPlan.ForWrite repairPlan;
     private final Map<Replica, Mutation> pendingRepairs;
     private final CountDownLatch latch;
-
+    private final int blockFor;
     private volatile long mutationsSentTime;
 
-    public BlockingPartitionRepair(DecoratedKey key, Map<Replica, Mutation> repairs, ReplicaPlan.ForWrite writePlan)
+    public BlockingPartitionRepair(DecoratedKey key, Map<Replica, Mutation> repairs, ReplicaPlan.ForWrite repairPlan)
     {
         this.key = key;
         this.pendingRepairs = new ConcurrentHashMap<>(repairs);
-        this.writePlan = writePlan;
+        this.repairPlan = repairPlan;
 
         // make sure all the read repair targets are contact of the repair write plan
-        Preconditions.checkState(all(repairs.keySet(), (r) -> writePlan.contacts().contains(r)),
+        Preconditions.checkState(all(repairs.keySet(), (r) -> repairPlan.contacts().contains(r)),
                                  "All repair targets should be part of contacts of read repair write plan.");
 
-        int blockFor = writePlan.writeQuorum();
-        // here we remove empty repair mutations from the block for total, since
-        // we're not sending them mutations
-        for (Replica participant : writePlan.contacts())
+        // Remove empty repair mutations from the block for total, since we're not sending them.
+        // Besides, remote dcs can sometimes get involved in dc-local reads. We want to repair them if they do, but we
+        // they shouldn't block for them.
+        int adjustedBlockFor = repairPlan.writeQuorum();
+        for (Replica participant : repairPlan.contacts())
         {
             if (!repairs.containsKey(participant))
-                blockFor--;
+                adjustedBlockFor--;
 
             // make sure for local consistency, all contacts are local replicas
-            Preconditions.checkState(!writePlan.consistencyLevel().isDatacenterLocal() || InOurDc.replicas().test(participant),
+            Preconditions.checkState(!repairPlan.consistencyLevel().isDatacenterLocal() || InOurDc.replicas().test(participant),
                                      "Local consistency blocking read repair is trying to contact remote DC node: " + participant.endpoint());
         }
+        this.blockFor = adjustedBlockFor;
 
         // there are some cases where logically identical data can return different digests
         // For read repair, this would result in ReadRepairHandler being called with a map of
@@ -97,27 +99,33 @@ public class BlockingPartitionRepair
         latch = newCountDownLatch(Math.max(blockFor, 0));
     }
 
+    public ReplicaPlan.ForWrite repairPlan()
+    {
+        return repairPlan;
+    }
+
     int blockFor()
     {
-        return writePlan.writeQuorum();
+        return blockFor;
     }
 
     @VisibleForTesting
     int waitingOn()
     {
-        return (int) latch.count();
+        return latch.count();
     }
 
     @VisibleForTesting
     void ack(InetAddressAndPort from)
     {
-        pendingRepairs.remove(writePlan.lookup(from));
+        pendingRepairs.remove(repairPlan.lookup(from));
         latch.decrement();
     }
 
     @Override
     public void onResponse(Message<Object> msg)
     {
+        repairPlan.collectSuccess(msg.from());
         ack(msg.from());
     }
 
@@ -200,7 +208,8 @@ public class BlockingPartitionRepair
         if (awaitRepairsUntil(timeout + timeoutUnit.convert(mutationsSentTime, TimeUnit.NANOSECONDS), timeoutUnit))
             return;
 
-        EndpointsForToken newCandidates = writePlan.consistencyLevel().isDatacenterLocal() ? writePlan.liveUncontacted().filter(InOurDc.replicas()) : writePlan.liveUncontacted();
+        EndpointsForToken newCandidates = repairPlan.consistencyLevel().isDatacenterLocal() ? repairPlan.liveUncontacted().filter(InOurDc.replicas()) : repairPlan.liveUncontacted();
+
         if (newCandidates.isEmpty())
             return;
 
@@ -222,7 +231,7 @@ public class BlockingPartitionRepair
 
             if (mutation == null)
             {
-                mutation = BlockingReadRepairs.createRepairMutation(update, writePlan.consistencyLevel(), replica.endpoint(), true);
+                mutation = BlockingReadRepairs.createRepairMutation(update, repairPlan.consistencyLevel(), replica.endpoint(), true);
                 versionedMutations[versionIdx] = mutation;
             }
 
@@ -241,7 +250,7 @@ public class BlockingPartitionRepair
 
     Keyspace getKeyspace()
     {
-        return writePlan.keyspace();
+        return repairPlan.keyspace();
     }
 
     DecoratedKey getKey()
@@ -251,6 +260,6 @@ public class BlockingPartitionRepair
 
     ConsistencyLevel getConsistency()
     {
-        return writePlan.consistencyLevel();
+        return repairPlan.consistencyLevel();
     }
 }

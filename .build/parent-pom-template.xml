@@ -331,6 +331,11 @@
         </exclusions>
       </dependency>
       <dependency>
+        <groupId>com.google.guava</groupId>
+        <artifactId>guava-testlib</artifactId>
+        <version>27.0-jre</version>
+      </dependency>
+      <dependency>
         <groupId>com.google.jimfs</groupId>
         <artifactId>jimfs</artifactId>
         <version>1.1</version>
@@ -422,27 +427,27 @@
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-core</artifactId>
-        <version>2.13.2</version>
+        <version>2.15.3</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
-        <version>2.13.2.2</version>
+        <version>2.15.3</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-annotations</artifactId>
-        <version>2.13.2</version>
+        <version>2.15.3</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.datatype</groupId>
         <artifactId>jackson-datatype-jsr310</artifactId>
-        <version>2.13.2</version>
+        <version>2.15.3</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson.dataformat</groupId>
         <artifactId>jackson-dataformat-yaml</artifactId>
-        <version>2.13.2</version>
+        <version>2.15.3</version>
         <scope>test</scope>
         <exclusions>
           <exclusion>
@@ -464,7 +469,7 @@
       <dependency>
         <groupId>org.yaml</groupId>
         <artifactId>snakeyaml</artifactId>
-        <version>1.26</version>
+        <version>2.1</version>
       </dependency>
       <dependency>
         <groupId>junit</groupId>
@@ -507,12 +512,6 @@
             <groupId>com.google.guava</groupId>
           </exclusion>
         </exclusions>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.cassandra</groupId>
-        <artifactId>harry-core</artifactId>
-        <version>0.0.1</version>
-        <scope>test</scope>
       </dependency>
       <dependency>
         <groupId>org.reflections</groupId>
@@ -994,13 +993,21 @@
         <scope>provided</scope>
       </dependency>
       <dependency>
-        <groupId>org.fusesource</groupId>
-        <artifactId>sigar</artifactId>
-        <version>1.6.4</version>
+        <groupId>com.github.oshi</groupId>
+        <artifactId>oshi-core</artifactId>
+        <version>6.4.8</version>
         <exclusions>
           <exclusion>
-            <artifactId>log4j</artifactId>
-            <groupId>log4j</groupId>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-bom</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-parent</artifactId>
           </exclusion>
         </exclusions>
       </dependency>

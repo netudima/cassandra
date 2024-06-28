@@ -28,6 +28,8 @@ import java.util.Random;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+
+import org.apache.cassandra.ServerTestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -36,7 +38,6 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -61,6 +62,7 @@ import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileInputStreamPlus;
 import org.apache.cassandra.io.util.FileOutputStreamPlus;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.streaming.OutgoingStream;
@@ -127,8 +129,8 @@ public class LegacySSTableTest
 
         LEGACY_SSTABLE_ROOT = new File(scp).toAbsolute();
         Assert.assertTrue("System property " + LEGACY_SSTABLE_ROOT + " does not specify a directory", LEGACY_SSTABLE_ROOT.isDirectory());
-
-        SchemaLoader.prepareServer();
+        ServerTestUtils.prepareServerNoRegister();
+        MessagingService.instance().waitUntilListeningUnchecked();
         StorageService.instance.initServer();
         Keyspace.setInitialized();
         createKeyspace();

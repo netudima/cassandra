@@ -18,28 +18,63 @@
 package org.apache.cassandra.cql3;
 
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Predicate;
-import com.google.common.collect.*;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
 import com.google.common.primitives.Ints;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.antlr.runtime.*;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import org.antlr.runtime.RecognitionException;
 import org.apache.cassandra.concurrent.ImmediateExecutor;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.cql3.functions.Function;
+import org.apache.cassandra.cql3.functions.FunctionName;
+import org.apache.cassandra.cql3.functions.UDAggregate;
+import org.apache.cassandra.cql3.functions.UDFunction;
+import org.apache.cassandra.cql3.selection.ResultSetBuilder;
+import org.apache.cassandra.cql3.statements.BatchStatement;
+import org.apache.cassandra.cql3.statements.ModificationStatement;
+import org.apache.cassandra.cql3.statements.QualifiedStatement;
+import org.apache.cassandra.cql3.statements.SelectStatement;
+import org.apache.cassandra.cql3.statements.schema.AlterSchemaStatement;
+import org.apache.cassandra.db.ConsistencyLevel;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.ReadCommand;
+import org.apache.cassandra.db.ReadQuery;
+import org.apache.cassandra.db.ReadResponse;
+import org.apache.cassandra.db.SinglePartitionReadQuery;
+import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.partitions.PartitionIterator;
+import org.apache.cassandra.db.partitions.PartitionIterators;
 import org.apache.cassandra.db.partitions.UnfilteredPartitionIterators;
+import org.apache.cassandra.db.rows.Row;
+import org.apache.cassandra.db.rows.RowIterator;
+import org.apache.cassandra.exceptions.CassandraException;
+import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.exceptions.IsBootstrappingException;
+import org.apache.cassandra.exceptions.RequestExecutionException;
+import org.apache.cassandra.exceptions.RequestValidationException;
+import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.metrics.CQLMetrics;
 import org.apache.cassandra.metrics.ClientRequestMetrics;
 import org.apache.cassandra.metrics.ClientRequestsMetricsHolder;
 import org.apache.cassandra.net.Message;
@@ -49,27 +84,21 @@ import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaChangeListener;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.cql3.functions.UDAggregate;
-import org.apache.cassandra.cql3.functions.UDFunction;
-import org.apache.cassandra.cql3.functions.Function;
-import org.apache.cassandra.cql3.functions.FunctionName;
-import org.apache.cassandra.cql3.selection.ResultSetBuilder;
-import org.apache.cassandra.cql3.statements.*;
-import org.apache.cassandra.db.*;
-import org.apache.cassandra.db.rows.Row;
-import org.apache.cassandra.db.rows.RowIterator;
-import org.apache.cassandra.db.partitions.PartitionIterator;
-import org.apache.cassandra.db.partitions.PartitionIterators;
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.gms.Gossiper;
-import org.apache.cassandra.metrics.CQLMetrics;
-import org.apache.cassandra.service.*;
+import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.service.pager.QueryPager;
+import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tracing.Tracing;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
-import org.apache.cassandra.utils.*;
+import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.CassandraVersion;
+import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.JVMStabilityInspector;
+import org.apache.cassandra.utils.MD5Digest;
+import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.FutureCombiner;
 
@@ -79,7 +108,7 @@ import static org.apache.cassandra.utils.Clock.Global.nanoTime;
 
 public class QueryProcessor implements QueryHandler
 {
-    public static final CassandraVersion CQL_VERSION = new CassandraVersion("3.4.7");
+    public static final CassandraVersion CQL_VERSION = new CassandraVersion("3.4.8");
 
     // See comments on QueryProcessor #prepare
     public static final CassandraVersion NEW_PREPARED_STATEMENT_BEHAVIOUR_SINCE_40 = new CassandraVersion("4.0.2");
@@ -206,7 +235,6 @@ public class QueryProcessor implements QueryHandler
 
     private QueryProcessor()
     {
-        Schema.instance.registerListener(new StatementInvalidatingListener());
     }
 
     @VisibleForTesting
@@ -243,7 +271,7 @@ public class QueryProcessor implements QueryHandler
         }
     }
 
-    public ResultMessage processStatement(CQLStatement statement, QueryState queryState, QueryOptions options, long queryStartNanoTime)
+    public ResultMessage processStatement(CQLStatement statement, QueryState queryState, QueryOptions options, Dispatcher.RequestTime requestTime)
     throws RequestExecutionException, RequestValidationException
     {
         logger.trace("Process {} @CL.{}", statement, options.getConsistency());
@@ -253,7 +281,7 @@ public class QueryProcessor implements QueryHandler
 
         ResultMessage result = options.getConsistency() == ConsistencyLevel.NODE_LOCAL
                              ? processNodeLocalStatement(statement, queryState, options)
-                             : statement.execute(queryState, options, queryStartNanoTime);
+                             : statement.execute(queryState, options, requestTime);
 
         return result == null ? new ResultMessage.Void() : result;
     }
@@ -273,7 +301,7 @@ public class QueryProcessor implements QueryHandler
 
     private ResultMessage processNodeLocalWrite(CQLStatement statement, QueryState queryState, QueryOptions options)
     {
-        ClientRequestMetrics  levelMetrics = ClientRequestsMetricsHolder.writeMetricsForLevel(ConsistencyLevel.NODE_LOCAL);
+        ClientRequestMetrics levelMetrics = ClientRequestsMetricsHolder.writeMetricsForLevel(ConsistencyLevel.NODE_LOCAL);
         ClientRequestMetrics globalMetrics = ClientRequestsMetricsHolder.writeMetrics;
 
         long startTime = nanoTime();
@@ -314,12 +342,12 @@ public class QueryProcessor implements QueryHandler
         }
     }
 
-    public static ResultMessage process(String queryString, ConsistencyLevel cl, QueryState queryState, long queryStartNanoTime)
+    public static ResultMessage process(String queryString, ConsistencyLevel cl, QueryState queryState, Dispatcher.RequestTime requestTime)
     throws RequestExecutionException, RequestValidationException
     {
         QueryOptions options = QueryOptions.forInternalCalls(cl, Collections.<ByteBuffer>emptyList());
         CQLStatement statement = instance.parse(queryString, queryState, options);
-        return instance.process(statement, queryState, options, queryStartNanoTime);
+        return instance.process(statement, queryState, options, requestTime);
     }
 
     public CQLStatement parse(String queryString, QueryState queryState, QueryOptions options)
@@ -331,12 +359,12 @@ public class QueryProcessor implements QueryHandler
                                  QueryState state,
                                  QueryOptions options,
                                  Map<String, ByteBuffer> customPayload,
-                                 long queryStartNanoTime) throws RequestExecutionException, RequestValidationException
+                                 Dispatcher.RequestTime requestTime) throws RequestExecutionException, RequestValidationException
     {
-        return process(statement, state, options, queryStartNanoTime);
+        return process(statement, state, options, requestTime);
     }
 
-    public ResultMessage process(CQLStatement prepared, QueryState queryState, QueryOptions options, long queryStartNanoTime)
+    public ResultMessage process(CQLStatement prepared, QueryState queryState, QueryOptions options, Dispatcher.RequestTime requestTime)
     throws RequestExecutionException, RequestValidationException
     {
         options.prepare(prepared.getBindVariables());
@@ -346,7 +374,7 @@ public class QueryProcessor implements QueryHandler
         if (!queryState.getClientState().isInternal)
             metrics.regularStatementsExecuted.inc();
 
-        return processStatement(prepared, queryState, options, queryStartNanoTime);
+        return processStatement(prepared, queryState, options, requestTime);
     }
 
     public static CQLStatement parseStatement(String queryStr, ClientState clientState) throws RequestValidationException
@@ -364,7 +392,7 @@ public class QueryProcessor implements QueryHandler
         QueryState queryState = QueryState.forInternalCalls();
         QueryOptions options = QueryOptions.forInternalCalls(cl, values);
         CQLStatement statement = instance.parse(query, queryState, options);
-        ResultMessage result = instance.process(statement, queryState, options, nanoTime());
+        ResultMessage result = instance.process(statement, queryState, options, Dispatcher.RequestTime.forImmediateExecution());
         if (result instanceof ResultMessage.Rows)
             return UntypedResultSet.create(((ResultMessage.Rows)result).result);
         else
@@ -428,10 +456,15 @@ public class QueryProcessor implements QueryHandler
             qualifiedStatement.setKeyspace(clientState);
             keyspace = qualifiedStatement.keyspace();
         }
-
         // Note: if 2 threads prepare the same query, we'll live so don't bother synchronizing
         CQLStatement statement = raw.prepare(clientState);
         statement.validate(clientState);
+
+        // Set CQL string for AlterSchemaStatement as this is used to serialize the transformation
+        // in the cluster metadata log
+        if (statement instanceof AlterSchemaStatement)
+            ((AlterSchemaStatement)statement).setCql(query);
+
 
         if (isInternal)
             return new Prepared(statement, "", fullyQualified, keyspace);
@@ -526,7 +559,7 @@ public class QueryProcessor implements QueryHandler
         try
         {
             Prepared prepared = prepareInternal(query);
-            ResultMessage result = prepared.statement.execute(state, makeInternalOptionsWithNowInSec(prepared.statement, state.getNowInSeconds(), values, cl), nanoTime());
+            ResultMessage result = prepared.statement.execute(state, makeInternalOptionsWithNowInSec(prepared.statement, state.getNowInSeconds(), values, cl), Dispatcher.RequestTime.forImmediateExecution());
             if (result instanceof ResultMessage.Rows)
                 return UntypedResultSet.create(((ResultMessage.Rows)result).result);
             else
@@ -586,12 +619,12 @@ public class QueryProcessor implements QueryHandler
      * Note that this only make sense for Selects so this only accept SELECT statements and is only useful in rare
      * cases.
      */
-    public static UntypedResultSet executeInternalWithNow(long nowInSec, long queryStartNanoTime, String query, Object... values)
+    public static UntypedResultSet executeInternalWithNow(long nowInSec, Dispatcher.RequestTime requestTime, String query, Object... values)
     {
         Prepared prepared = prepareInternal(query);
         assert prepared.statement instanceof SelectStatement;
         SelectStatement select = (SelectStatement)prepared.statement;
-        ResultMessage result = select.executeInternal(internalQueryState(), makeInternalOptionsWithNowInSec(prepared.statement, nowInSec, values), nowInSec, queryStartNanoTime);
+        ResultMessage result = select.executeInternal(internalQueryState(), makeInternalOptionsWithNowInSec(prepared.statement, nowInSec, values), nowInSec, requestTime);
         assert result instanceof ResultMessage.Rows;
         return UntypedResultSet.create(((ResultMessage.Rows)result).result);
     }
@@ -641,7 +674,7 @@ public class QueryProcessor implements QueryHandler
 
         synchronized (this)
         {
-            CassandraVersion minVersion = Gossiper.instance.getMinVersion(DatabaseDescriptor.getWriteRpcTimeout(TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS);
+            CassandraVersion minVersion = ClusterMetadata.current().directory.clusterMinVersion.cassandraVersion;
             if (minVersion != null && minVersion.compareTo(NEW_PREPARED_STATEMENT_BEHAVIOUR_SINCE_40, true) >= 0)
             {
                 logger.info("Fully upgraded to at least {}", minVersion);
@@ -791,17 +824,18 @@ public class QueryProcessor implements QueryHandler
         return new ResultMessage.Prepared(statementId, resultMetadata.getResultMetadataId(), preparedMetadata, resultMetadata);
     }
 
+    @Override
     public ResultMessage processPrepared(CQLStatement statement,
                                          QueryState state,
                                          QueryOptions options,
                                          Map<String, ByteBuffer> customPayload,
-                                         long queryStartNanoTime)
+                                         Dispatcher.RequestTime requestTime)
                                                  throws RequestExecutionException, RequestValidationException
     {
-        return processPrepared(statement, state, options, queryStartNanoTime);
+        return processPrepared(statement, state, options, requestTime);
     }
 
-    public ResultMessage processPrepared(CQLStatement statement, QueryState queryState, QueryOptions options, long queryStartNanoTime)
+    public ResultMessage processPrepared(CQLStatement statement, QueryState queryState, QueryOptions options, Dispatcher.RequestTime requestTime)
     throws RequestExecutionException, RequestValidationException
     {
         List<ByteBuffer> variables = options.getValues();
@@ -820,27 +854,27 @@ public class QueryProcessor implements QueryHandler
         }
 
         metrics.preparedStatementsExecuted.inc();
-        return processStatement(statement, queryState, options, queryStartNanoTime);
+        return processStatement(statement, queryState, options, requestTime);
     }
 
     public ResultMessage processBatch(BatchStatement statement,
                                       QueryState state,
                                       BatchQueryOptions options,
                                       Map<String, ByteBuffer> customPayload,
-                                      long queryStartNanoTime)
+                                      Dispatcher.RequestTime requestTime)
                                               throws RequestExecutionException, RequestValidationException
     {
-        return processBatch(statement, state, options, queryStartNanoTime);
+        return processBatch(statement, state, options, requestTime);
     }
 
-    public ResultMessage processBatch(BatchStatement batch, QueryState queryState, BatchQueryOptions options, long queryStartNanoTime)
+    public ResultMessage processBatch(BatchStatement batch, QueryState queryState, BatchQueryOptions options, Dispatcher.RequestTime requestTime)
     throws RequestExecutionException, RequestValidationException
     {
         ClientState clientState = queryState.getClientState().cloneWithKeyspaceIfSet(options.getKeyspace());
         batch.authorize(clientState);
         batch.validate();
         batch.validate(clientState);
-        return batch.execute(queryState, options, queryStartNanoTime);
+        return batch.execute(queryState, options, requestTime);
     }
 
     public static CQLStatement getStatement(String queryStr, ClientState clientState)
@@ -854,7 +888,13 @@ public class QueryProcessor implements QueryHandler
             ((QualifiedStatement) statement).setKeyspace(clientState);
 
         Tracing.trace("Preparing statement");
-        return statement.prepare(clientState);
+        CQLStatement prepared = statement.prepare(clientState);
+        // Set CQL string for AlterSchemaStatement as this is used to serialize the transformation
+        // in the cluster metadata log
+        if (prepared instanceof AlterSchemaStatement)
+            ((AlterSchemaStatement) prepared).setCql(queryStr);
+
+        return prepared;
     }
 
     public static <T extends CQLStatement.Raw> T parseStatement(String queryStr, Class<T> klass, String type) throws SyntaxException
@@ -915,6 +955,11 @@ public class QueryProcessor implements QueryHandler
     public static void clearPreparedStatementsCache()
     {
         preparedStatements.asMap().clear();
+    }
+
+    public static void registerStatementInvalidatingListener()
+    {
+        Schema.instance.registerListener(new StatementInvalidatingListener());
     }
 
     private static class StatementInvalidatingListener implements SchemaChangeListener
@@ -1019,7 +1064,7 @@ public class QueryProcessor implements QueryHandler
         {
             // in case there are other overloads, we have to remove all overloads since argument type
             // matching may change (due to type casting)
-            if (Schema.instance.getKeyspaceMetadata(ksName).userFunctions.get(new FunctionName(ksName, functionName)).size() > 1)
+            if (!Schema.instance.getKeyspaceMetadata(ksName).userFunctions.get(new FunctionName(ksName, functionName)).isEmpty())
                 removeInvalidPreparedStatementsForFunction(ksName, functionName);
         }
 

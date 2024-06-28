@@ -37,8 +37,6 @@ import org.apache.commons.io.FileUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import io.netty.handler.ssl.OpenSslClientContext;
 import io.netty.handler.ssl.OpenSslServerContext;
@@ -50,14 +48,15 @@ import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.config.ParameterizedClass;
 import org.apache.cassandra.io.util.File;
+import org.apache.cassandra.transport.TlsTestUtils;
 
+import static org.apache.cassandra.config.EncryptionOptions.ClientAuth.NOT_REQUIRED;
+import static org.apache.cassandra.config.EncryptionOptions.ClientAuth.REQUIRED;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 public class SSLFactoryTest
 {
-    private static final Logger logger = LoggerFactory.getLogger(SSLFactoryTest.class);
-
     static final SelfSignedCertificate ssc;
     static
     {
@@ -79,9 +78,9 @@ public class SSLFactoryTest
     {
         SSLFactory.clearSslContextCache();
         encryptionOptions = new ServerEncryptionOptions()
-                            .withTrustStore("test/conf/cassandra_ssl_test.truststore")
-                            .withTrustStorePassword("cassandra")
-                            .withRequireClientAuth(false)
+                            .withTrustStore(TlsTestUtils.SERVER_TRUSTSTORE_PATH)
+                            .withTrustStorePassword(TlsTestUtils.SERVER_TRUSTSTORE_PASSWORD)
+                            .withRequireClientAuth(NOT_REQUIRED)
                             .withCipherSuites("TLS_RSA_WITH_AES_128_CBC_SHA")
                             .withSslContextFactory(new ParameterizedClass(TestFileBasedSSLContextFactory.class.getName(),
                                                                           new HashMap<>()));
@@ -89,10 +88,10 @@ public class SSLFactoryTest
 
     private ServerEncryptionOptions addKeystoreOptions(ServerEncryptionOptions options)
     {
-        return options.withKeyStore("test/conf/cassandra_ssl_test.keystore")
-                      .withKeyStorePassword("cassandra")
-                      .withOutboundKeystore("test/conf/cassandra_ssl_test_outbound.keystore")
-                      .withOutboundKeystorePassword("cassandra");
+        return options.withKeyStore(TlsTestUtils.SERVER_KEYSTORE_PATH)
+                      .withKeyStorePassword(TlsTestUtils.SERVER_KEYSTORE_PASSWORD)
+                      .withOutboundKeystore(TlsTestUtils.SERVER_OUTBOUND_KEYSTORE_PATH)
+                      .withOutboundKeystorePassword(TlsTestUtils.SERVER_OUTBOUND_KEYSTORE_PASSWORD);
     }
 
     private ServerEncryptionOptions addPEMKeystoreOptions(ServerEncryptionOptions options)
@@ -100,11 +99,11 @@ public class SSLFactoryTest
         ParameterizedClass sslContextFactoryClass = new ParameterizedClass("org.apache.cassandra.security.PEMBasedSslContextFactory",
                                                                            new HashMap<>());
         return options.withSslContextFactory(sslContextFactoryClass)
-                      .withKeyStore("test/conf/cassandra_ssl_test.keystore.pem")
-                      .withKeyStorePassword("cassandra")
-                      .withOutboundKeystore("test/conf/cassandra_ssl_test.keystore.pem")
-                      .withOutboundKeystorePassword("cassandra")
-                      .withTrustStore("test/conf/cassandra_ssl_test.truststore.pem");
+                      .withKeyStore(TlsTestUtils.SERVER_KEYSTORE_PATH_PEM)
+                      .withKeyStorePassword(TlsTestUtils.SERVER_KEYSTORE_PASSWORD)
+                      .withOutboundKeystore(TlsTestUtils.SERVER_KEYSTORE_PATH_PEM)
+                      .withOutboundKeystorePassword(TlsTestUtils.SERVER_KEYSTORE_PASSWORD)
+                      .withTrustStore(TlsTestUtils.SERVER_TRUSTSTORE_PEM_PATH);
     }
 
     @Test
@@ -118,8 +117,8 @@ public class SSLFactoryTest
             options.sslContextFactoryInstance.initHotReloading();
             legacyOptions.sslContextFactoryInstance.initHotReloading();
 
-            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
-            SslContext oldLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, true, ISslContextFactory.SocketType.CLIENT, "test legacy");
+            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext oldLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test legacy");
             File keystoreFile = new File(options.keystore);
 
             SSLFactory.checkCertFilesForHotReloading();
@@ -127,8 +126,8 @@ public class SSLFactoryTest
             keystoreFile.trySetLastModified(System.currentTimeMillis() + 15000);
 
             SSLFactory.checkCertFilesForHotReloading();
-            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
-            SslContext newLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, true, ISslContextFactory.SocketType.CLIENT, "test legacy");
+            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext newLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test legacy");
 
             Assert.assertNotSame(oldCtx, newCtx);
             Assert.assertNotSame(oldLegacyCtx, newLegacyCtx);
@@ -151,12 +150,12 @@ public class SSLFactoryTest
         .withOutboundKeystorePassword("dummyPassword");
 
         // Server socket type should create a keystore with keystore & keystore password
-        final OpenSslServerContext context = (OpenSslServerContext) SSLFactory.createNettySslContext(options, true, ISslContextFactory.SocketType.SERVER);
+        final OpenSslServerContext context = (OpenSslServerContext) SSLFactory.createNettySslContext(options, REQUIRED, ISslContextFactory.SocketType.SERVER);
         assertNotNull(context);
 
         // Verify if right certificate is loaded into SslContext
         final Certificate loadedCertificate = getCertificateLoadedInSslContext(context.sessionContext());
-        final Certificate certificate = getCertificates("test/conf/cassandra_ssl_test.keystore", "cassandra");
+        final Certificate certificate = getCertificates(TlsTestUtils.SERVER_KEYSTORE_PATH, TlsTestUtils.SERVER_KEYSTORE_PASSWORD);
         assertEquals(loadedCertificate, certificate);
     }
 
@@ -168,12 +167,12 @@ public class SSLFactoryTest
         .withKeyStorePassword("dummyPassword");
 
         // Client socket type should create a keystore with outbound Keystore & outbound password
-        final OpenSslClientContext context = (OpenSslClientContext) SSLFactory.createNettySslContext(options, true, ISslContextFactory.SocketType.CLIENT);
+        final OpenSslClientContext context = (OpenSslClientContext) SSLFactory.createNettySslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT);
         assertNotNull(context);
 
         // Verify if right certificate is loaded into SslContext
         final Certificate loadedCertificate = getCertificateLoadedInSslContext(context.sessionContext());
-        final Certificate certificate = getCertificates("test/conf/cassandra_ssl_test_outbound.keystore", "cassandra");
+        final Certificate certificate = getCertificates(TlsTestUtils.SERVER_OUTBOUND_KEYSTORE_PATH, TlsTestUtils.SERVER_OUTBOUND_KEYSTORE_PASSWORD);
         assertEquals(loadedCertificate, certificate);
     }
 
@@ -189,8 +188,8 @@ public class SSLFactoryTest
             options.sslContextFactoryInstance.initHotReloading();
             legacyOptions.sslContextFactoryInstance.initHotReloading();
 
-            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
-            SslContext oldLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, true, ISslContextFactory.SocketType.CLIENT, "test legacy");
+            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext oldLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test legacy");
             File keystoreFile = new File(options.keystore);
 
             SSLFactory.checkCertFilesForHotReloading();
@@ -198,8 +197,8 @@ public class SSLFactoryTest
             keystoreFile.trySetLastModified(System.currentTimeMillis() + 15000);
 
             SSLFactory.checkCertFilesForHotReloading();
-            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
-            SslContext newLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, true, ISslContextFactory.SocketType.CLIENT, "test legacy");
+            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext newLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test legacy");
 
             Assert.assertNotSame(oldCtx, newCtx);
             Assert.assertNotSame(oldLegacyCtx, newLegacyCtx);
@@ -221,7 +220,7 @@ public class SSLFactoryTest
                                     .withKeyStorePassword("bad password")
                                     .withInternodeEncryption(ServerEncryptionOptions.InternodeEncryption.all);
 
-        SSLFactory.validateSslContext("testSslFactorySslInit_BadPassword_ThrowsException", options, false, true);
+        SSLFactory.validateSslContext("testSslFactorySslInit_BadPassword_ThrowsException", options, NOT_REQUIRED, true);
     }
 
     @Test
@@ -239,14 +238,14 @@ public class SSLFactoryTest
 
             SSLFactory.initHotReloading(options, options, true);  // deliberately not initializing with legacyOptions to match InboundSockets.addBindings
 
-            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
-            SslContext oldLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, true, ISslContextFactory.SocketType.CLIENT, "test legacy");
+            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext oldLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test legacy");
 
             changeKeystorePassword(options.keystore, options.keystore_password, "bad password");
 
             SSLFactory.checkCertFilesForHotReloading();
-            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
-            SslContext newLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, true, ISslContextFactory.SocketType.CLIENT, "test legacy");
+            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext newLegacyCtx = SSLFactory.getOrCreateSslContext(legacyOptions, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test legacy");
 
             Assert.assertSame(oldCtx, newCtx);
             Assert.assertSame(oldLegacyCtx, newLegacyCtx);
@@ -270,14 +269,14 @@ public class SSLFactoryTest
 
 
             SSLFactory.initHotReloading(options, options, true);
-            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext oldCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
             SSLFactory.checkCertFilesForHotReloading();
 
             testKeystoreFile.trySetLastModified(System.currentTimeMillis() + 15000);
             FileUtils.forceDelete(testKeystoreFile.toJavaIOFile());
 
             SSLFactory.checkCertFilesForHotReloading();
-            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, true, ISslContextFactory.SocketType.CLIENT, "test");
+            SslContext newCtx = SSLFactory.getOrCreateSslContext(options, REQUIRED, ISslContextFactory.SocketType.CLIENT, "test");
 
             Assert.assertSame(oldCtx, newCtx);
         }
@@ -298,7 +297,7 @@ public class SSLFactoryTest
         ServerEncryptionOptions options = addKeystoreOptions(encryptionOptions)
                                     .withCipherSuites("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256");
 
-        SslContext ctx1 = SSLFactory.getOrCreateSslContext(options, true,
+        SslContext ctx1 = SSLFactory.getOrCreateSslContext(options, REQUIRED,
                                                            ISslContextFactory.SocketType.SERVER, "test");
 
         Assert.assertTrue(ctx1.isServer());
@@ -306,7 +305,7 @@ public class SSLFactoryTest
 
         options = options.withCipherSuites("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256");
 
-        SslContext ctx2 = SSLFactory.getOrCreateSslContext(options, true,
+        SslContext ctx2 = SSLFactory.getOrCreateSslContext(options, REQUIRED,
                                                            ISslContextFactory.SocketType.CLIENT, "test");
 
         Assert.assertTrue(ctx2.isClient());
@@ -323,7 +322,7 @@ public class SSLFactoryTest
         new EncryptionOptions()
         .withSslContextFactory(new ParameterizedClass(DummySslContextFactoryImpl.class.getName(), parameters1))
         .withProtocol("TLSv1.1")
-        .withRequireClientAuth(true)
+        .withRequireClientAuth(REQUIRED)
         .withRequireEndpointVerification(false);
 
         SSLFactory.CacheKey cacheKey1 = new SSLFactory.CacheKey(encryptionOptions1, ISslContextFactory.SocketType.SERVER, "test"
@@ -336,7 +335,7 @@ public class SSLFactoryTest
         new EncryptionOptions()
         .withSslContextFactory(new ParameterizedClass(DummySslContextFactoryImpl.class.getName(), parameters2))
         .withProtocol("TLSv1.1")
-        .withRequireClientAuth(true)
+        .withRequireClientAuth(REQUIRED)
         .withRequireEndpointVerification(false);
 
         SSLFactory.CacheKey cacheKey2 = new SSLFactory.CacheKey(encryptionOptions2, ISslContextFactory.SocketType.SERVER, "test"

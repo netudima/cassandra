@@ -102,6 +102,7 @@ import org.apache.cassandra.net.MessagingServiceMBean;
 import org.apache.cassandra.service.ActiveRepairServiceMBean;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.CacheServiceMBean;
+import org.apache.cassandra.tcm.CMSOperationsMBean;
 import org.apache.cassandra.service.GCInspector;
 import org.apache.cassandra.service.GCInspectorMXBean;
 import org.apache.cassandra.service.StorageProxy;
@@ -120,6 +121,8 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Uninterruptibles;
+
+import org.apache.cassandra.tcm.CMSOperations;
 import org.apache.cassandra.tools.nodetool.GetTimeout;
 import org.apache.cassandra.utils.NativeLibrary;
 
@@ -147,6 +150,7 @@ public class NodeProbe implements AutoCloseable
     protected MBeanServerConnection mbeanServerConn;
     protected CompactionManagerMBean compactionProxy;
     protected StorageServiceMBean ssProxy;
+    protected CMSOperationsMBean cmsProxy;
     protected GossiperMBean gossProxy;
     protected MemoryMXBean memProxy;
     protected GCInspectorMXBean gcProxy;
@@ -259,6 +263,8 @@ public class NodeProbe implements AutoCloseable
         {
             ObjectName name = new ObjectName(ssObjName);
             ssProxy = JMX.newMBeanProxy(mbeanServerConn, name, StorageServiceMBean.class);
+            name = new ObjectName(CMSOperations.MBEAN_OBJECT_NAME);
+            cmsProxy = JMX.newMBeanProxy(mbeanServerConn, name, CMSOperationsMBean.class);
             name = new ObjectName(MessagingService.MBEAN_NAME);
             msProxy = JMX.newMBeanProxy(mbeanServerConn, name, MessagingServiceMBean.class);
             name = new ObjectName(StreamManagerMBean.OBJECT_NAME);
@@ -1006,7 +1012,12 @@ public class NodeProbe implements AutoCloseable
 
     public void removeNode(String token)
     {
-        ssProxy.removeNode(token);
+        removeNode(token, false);
+    }
+
+    public void removeNode(String token, boolean force)
+    {
+        ssProxy.removeNode(token, force);
     }
 
     public String getRemovalStatus(boolean withPort)
@@ -1021,7 +1032,7 @@ public class NodeProbe implements AutoCloseable
 
     public void assassinateEndpoint(String address) throws UnknownHostException
     {
-        gossProxy.assassinateEndpoint(address);
+        ssProxy.assassinateEndpoint(address);
     }
 
     public List<String> reloadSeeds()
@@ -1215,8 +1226,14 @@ public class NodeProbe implements AutoCloseable
         return spProxy;
     }
 
-    public StorageServiceMBean getStorageService() {
+    public StorageServiceMBean getStorageService()
+    {
         return ssProxy;
+    }
+
+    public CMSOperationsMBean getCMSOperationsProxy()
+    {
+        return cmsProxy;
     }
 
     public GossiperMBean getGossProxy()
@@ -1337,9 +1354,9 @@ public class NodeProbe implements AutoCloseable
         }
     }
 
-    public void stopNativeTransport()
+    public void stopNativeTransport(boolean force)
     {
-        ssProxy.stopNativeTransport();
+        ssProxy.stopNativeTransport(force);
     }
 
     public void startNativeTransport()
@@ -1843,7 +1860,9 @@ public class NodeProbe implements AutoCloseable
               case ThreadPoolMetrics.ACTIVE_TASKS:
               case ThreadPoolMetrics.PENDING_TASKS:
               case ThreadPoolMetrics.COMPLETED_TASKS:
+              case ThreadPoolMetrics.CORE_POOL_SIZE:
               case ThreadPoolMetrics.MAX_POOL_SIZE:
+              case ThreadPoolMetrics.MAX_TASKS_QUEUED:
                   return JMX.newMBeanProxy(mbeanServerConn, oName, CassandraMetricsRegistry.JmxGaugeMBean.class).getValue();
               case ThreadPoolMetrics.TOTAL_BLOCKED_TASKS:
               case ThreadPoolMetrics.CURRENTLY_BLOCKED_TASKS:
@@ -2038,7 +2057,7 @@ public class NodeProbe implements AutoCloseable
                 case "connections": // List<Map<String,String>> - list of all native connections and their properties
                 case "connectedNativeClients": // number of connected native clients
                 case "connectedNativeClientsByUser": // number of native clients by username
-                case "clientsByProtocolVersion": // number of native clients by username
+                case "clientsByProtocolVersion": // number of native clients by protocol version
                     return JMX.newMBeanProxy(mbeanServerConn,
                             new ObjectName("org.apache.cassandra.metrics:type=Client,name=" + metricName),
                             CassandraMetricsRegistry.JmxGaugeMBean.class).getValue();
@@ -2351,6 +2370,11 @@ public class NodeProbe implements AutoCloseable
             table.add(value);
 
         table.printTo(out);
+    }
+
+    public void abortBootstrap(String nodeId, String endpoint)
+    {
+        ssProxy.abortBootstrap(nodeId, endpoint);
     }
 }
 

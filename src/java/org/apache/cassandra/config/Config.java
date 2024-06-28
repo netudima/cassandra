@@ -172,6 +172,15 @@ public class Config
 
     public volatile DurationSpec.LongMillisecondsBound stream_transfer_task_timeout = new DurationSpec.LongMillisecondsBound("12h");
 
+    public volatile DurationSpec.LongMillisecondsBound cms_await_timeout = new DurationSpec.LongMillisecondsBound("120000ms");
+    public volatile int cms_default_max_retries = 10;
+    public volatile DurationSpec.IntMillisecondsBound cms_default_retry_backoff = new DurationSpec.IntMillisecondsBound("50ms");
+    /**
+     * How often we should snapshot the cluster metadata.
+     */
+    public volatile int metadata_snapshot_frequency = 100;
+
+
     public volatile double phi_convict_threshold = 8.0;
 
     public int concurrent_reads = 32;
@@ -275,9 +284,6 @@ public class Config
 
     public boolean start_native_transport = true;
     public int native_transport_port = 9042;
-    /** @deprecated See CASSANDRA-19392 */
-    @Deprecated(since = "5.0")
-    public Integer native_transport_port_ssl = null;
     public int native_transport_max_threads = 128;
     @Replaces(oldName = "native_transport_max_frame_size_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
     public DataStorageSpec.IntMebibytesBound native_transport_max_frame_size = new DataStorageSpec.IntMebibytesBound("16MiB");
@@ -864,6 +870,7 @@ public class Config
     public volatile boolean user_timestamps_enabled = true;
     public volatile boolean alter_table_enabled = true;
     public volatile boolean group_by_enabled = true;
+    public volatile boolean bulk_load_enabled = true;
     public volatile boolean drop_truncate_table_enabled = true;
     public volatile boolean drop_keyspace_enabled = true;
     public volatile boolean secondary_indexes_enabled = true;
@@ -1284,5 +1291,52 @@ public class Config
 
     public double severity_during_decommission = 0;
 
+    // TODO Revisit MessagingService::current_version
     public StorageCompatibilityMode storage_compatibility_mode;
+
+    /**
+     * For the purposes of progress barrier we only support ALL, EACH_QUORUM, QUORUM, LOCAL_QUORUM, ANY, and ONE.
+     *
+     * We will still try all consistency levels above the lowest acceptable, and only fall back to it if we can not
+     * collect enough nodes.
+     */
+    public volatile ConsistencyLevel progress_barrier_min_consistency_level = ConsistencyLevel.EACH_QUORUM;
+    public volatile ConsistencyLevel progress_barrier_default_consistency_level = ConsistencyLevel.EACH_QUORUM;
+
+    public volatile DurationSpec.LongMillisecondsBound progress_barrier_timeout = new DurationSpec.LongMillisecondsBound("3600000ms");
+    public volatile DurationSpec.LongMillisecondsBound progress_barrier_backoff = new DurationSpec.LongMillisecondsBound("1000ms");
+    public volatile DurationSpec.LongSecondsBound discovery_timeout = new DurationSpec.LongSecondsBound("30s");
+    public boolean unsafe_tcm_mode = false;
+
+    public enum TriggersPolicy
+    {
+        // Execute triggers
+        enabled,
+        // Don't execute triggers when executing queries
+        disabled,
+        // Throw an exception when attempting to execute a trigger
+        forbidden
+    }
+
+    public TriggersPolicy triggers_policy = TriggersPolicy.enabled;
+
+    /**
+     * Which timestamp should be used to represent a base for replica-side timeouts.
+     * Client-side timeout is always based on the QUEUE, and is controlled by native_transport_timeout.
+     */
+    public enum CQLStartTime
+    {
+        REQUEST, // uses a timestamp that represent the start of processing of the request
+        QUEUE    // uses a timestamp that represents when the request was enqueued
+    }
+    public volatile CQLStartTime cql_start_time = CQLStartTime.REQUEST;
+
+    public boolean native_transport_throw_on_overload = false;
+    public double native_transport_queue_max_item_age_threshold = Double.MAX_VALUE;
+    public DurationSpec.LongMillisecondsBound native_transport_min_backoff_on_queue_overload = new DurationSpec.LongMillisecondsBound("10ms");
+    public DurationSpec.LongMillisecondsBound native_transport_max_backoff_on_queue_overload = new DurationSpec.LongMillisecondsBound("200ms");
+
+    // 3.x Cassandra Driver has its "read" timeout set to 12 seconds, default matches this.
+    public DurationSpec.LongMillisecondsBound native_transport_timeout = new DurationSpec.LongMillisecondsBound("12s");
+    public boolean enforce_native_deadline_for_hints = false;
 }

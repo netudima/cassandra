@@ -27,8 +27,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Ints;
-import org.apache.cassandra.transport.ClientResourceLimits.Overload;
-import org.apache.cassandra.utils.concurrent.NonBlockingRateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,17 +47,18 @@ import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.net.*;
 import org.apache.cassandra.security.ISslContextFactory;
 import org.apache.cassandra.security.SSLFactory;
+import org.apache.cassandra.transport.ClientResourceLimits.Overload;
 import org.apache.cassandra.transport.messages.*;
+import org.apache.cassandra.utils.concurrent.NonBlockingRateLimiter;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 
 import static org.apache.cassandra.net.SocketFactory.newSslHandler;
 import static org.apache.cassandra.transport.CQLMessageHandler.envelopeSize;
 import static org.apache.cassandra.transport.Flusher.MAX_FRAMED_PAYLOAD_SIZE;
 import static org.apache.cassandra.transport.PipelineConfigurator.SSL_FACTORY_CONTEXT_DESCRIPTION;
-import static org.apache.cassandra.utils.concurrent.NonBlockingRateLimiter.NO_OP_LIMITER;
-
 import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
 import static org.apache.cassandra.utils.concurrent.BlockingQueues.newBlockingQueue;
+import static org.apache.cassandra.utils.concurrent.NonBlockingRateLimiter.NO_OP_LIMITER;
 
 public class SimpleClient implements Closeable
 {
@@ -367,6 +366,12 @@ public class SimpleClient implements Closeable
     private static class ConnectionTracker implements Connection.Tracker
     {
         public void addConnection(Channel ch, Connection connection) {}
+
+        @Override
+        public boolean isRunning()
+        {
+            return true;
+        }
     }
 
     private static class HandlerNames
@@ -417,12 +422,13 @@ public class SimpleClient implements Closeable
                     }
                     break;
                 case SUPPORTED:
+                case ERROR:
                     // just pass through
                     results.add(response);
                     break;
                 default:
                     throw new ProtocolException(String.format("Unexpected %s response expecting " +
-                                                              "READY, AUTHENTICATE or SUPPORTED",
+                                                              "READY, AUTHENTICATE, ERROR or SUPPORTED",
                                                               response.header.type));
             }
         }
@@ -447,8 +453,17 @@ public class SimpleClient implements Closeable
             FrameEncoder frameEncoder = frameEncoder(ctx);
             FrameEncoder.PayloadAllocator payloadAllocator = frameEncoder.allocator();
 
-            CQLMessageHandler.MessageConsumer<Message.Response> responseConsumer = (c, message, converter, backpressured) -> {
-                responseHandler.handleResponse(c, message);
+            CQLMessageHandler.MessageConsumer<Message.Response> responseConsumer = new CQLMessageHandler.MessageConsumer<Message.Response>()
+            {
+                public void dispatch(Channel channel, Message.Response message, Dispatcher.FlushItemConverter toFlushItem, Overload backpressure)
+                {
+                    responseHandler.handleResponse(channel, message);
+                }
+
+                public boolean hasQueueCapacity()
+                {
+                    return true;
+                }
             };
 
             CQLMessageHandler.ErrorHandler errorHandler = (error) -> {
@@ -503,6 +518,7 @@ public class SimpleClient implements Closeable
                                         responseConsumer,
                                         payloadAllocator,
                                         queueCapacity,
+                                        QueueBackpressure.NO_OP,
                                         resources,
                                         handler -> {},
                                         errorHandler,
@@ -541,7 +557,7 @@ public class SimpleClient implements Closeable
             pipeline.remove(this);
 
             Message.Response message = messageDecoder.decode(ctx.channel(), response);
-            responseConsumer.accept(channel, message, (ch, req, resp) -> null, Overload.NONE);
+            responseConsumer.dispatch(channel, message, (ch, req, resp) -> null, Overload.NONE);
         }
 
         private FrameDecoder frameDecoder(ChannelHandlerContext ctx, BufferPoolAllocator allocator)
@@ -624,7 +640,7 @@ public class SimpleClient implements Closeable
         protected void initChannel(Channel channel) throws Exception
         {
             super.initChannel(channel);
-            SslContext sslContext = SSLFactory.getOrCreateSslContext(encryptionOptions, encryptionOptions.require_client_auth,
+            SslContext sslContext = SSLFactory.getOrCreateSslContext(encryptionOptions, encryptionOptions.getClientAuth(),
                                                                      ISslContextFactory.SocketType.CLIENT, SSL_FACTORY_CONTEXT_DESCRIPTION);
             InetSocketAddress peer = encryptionOptions.require_endpoint_verification ? new InetSocketAddress(host, port) : null;
             channel.pipeline().addFirst("ssl", newSslHandler(channel, sslContext, peer));

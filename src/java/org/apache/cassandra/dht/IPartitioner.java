@@ -18,15 +18,14 @@
 package org.apache.cassandra.dht;
 
 import java.nio.ByteBuffer;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.service.StorageService;
 
 import javax.annotation.Nullable;
 
@@ -34,21 +33,7 @@ public interface IPartitioner
 {
     static IPartitioner global()
     {
-        return StorageService.instance.getTokenMetadata().partitioner;
-    }
-
-    static void validate(Collection<? extends AbstractBounds<?>> allBounds)
-    {
-        for (AbstractBounds<?> bounds : allBounds)
-            validate(bounds);
-    }
-
-    static void validate(AbstractBounds<?> bounds)
-    {
-        if (global() != bounds.left.getPartitioner())
-            throw new AssertionError(String.format("Partitioner in bounds serialization. Expected %s, was %s.",
-                                                   global().getClass().getName(),
-                                                   bounds.left.getPartitioner().getClass().getName()));
+        return DatabaseDescriptor.getPartitioner();
     }
 
     /**

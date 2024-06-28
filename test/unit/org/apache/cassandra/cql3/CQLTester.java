@@ -44,7 +44,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -52,7 +51,9 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import javax.annotation.Nullable;
 import javax.management.MBeanServerConnection;
 import javax.management.remote.JMXConnector;
@@ -60,6 +61,7 @@ import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXConnectorServer;
 import javax.management.remote.JMXServiceURL;
 import javax.management.remote.rmi.RMIConnectorServer;
+import javax.net.ssl.SSLException;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Strings;
@@ -89,6 +91,7 @@ import com.datastax.driver.core.Session;
 import com.datastax.driver.core.SimpleStatement;
 import com.datastax.driver.core.SocketOptions;
 import com.datastax.driver.core.Statement;
+import com.datastax.driver.core.TypeCodec;
 import com.datastax.driver.core.UDTValue;
 import com.datastax.driver.core.UserType;
 import com.datastax.driver.core.exceptions.UnauthorizedException;
@@ -97,11 +100,10 @@ import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.ServerTestUtils;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.auth.AuthCacheService;
-import org.apache.cassandra.auth.AuthKeyspace;
 import org.apache.cassandra.auth.AuthSchemaChangeListener;
 import org.apache.cassandra.auth.AuthTestUtils;
+import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.auth.IRoleManager;
-import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.config.DataStorageSpec;
@@ -115,7 +117,6 @@ import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.BooleanType;
-import org.apache.cassandra.db.marshal.ByteBufferAccessor;
 import org.apache.cassandra.db.marshal.ByteType;
 import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.db.marshal.CollectionType;
@@ -137,6 +138,7 @@ import org.apache.cassandra.db.marshal.TupleType;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.db.marshal.VectorType;
+import org.apache.cassandra.db.virtual.VirtualKeyspace;
 import org.apache.cassandra.db.virtual.VirtualKeyspaceRegistry;
 import org.apache.cassandra.db.virtual.VirtualSchemaKeyspace;
 import org.apache.cassandra.dht.Murmur3Partitioner;
@@ -150,25 +152,26 @@ import org.apache.cassandra.io.util.File;
 import org.apache.cassandra.io.util.FileSystems;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.InetAddressAndPort;
-import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
 import org.apache.cassandra.metrics.ClientMetrics;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.IndexMetadata;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.SchemaKeyspace;
-import org.apache.cassandra.schema.SchemaTestUtil;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.tcm.ClusterMetadataService;
 import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.Message;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.Server;
 import org.apache.cassandra.transport.SimpleClient;
+import org.apache.cassandra.transport.TlsTestUtils;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -189,6 +192,8 @@ import static org.apache.cassandra.cql3.SchemaElement.SchemaElementType.FUNCTION
 import static org.apache.cassandra.cql3.SchemaElement.SchemaElementType.MATERIALIZED_VIEW;
 import static org.apache.cassandra.cql3.SchemaElement.SchemaElementType.TABLE;
 import static org.apache.cassandra.cql3.SchemaElement.SchemaElementType.TYPE;
+import static org.apache.cassandra.metrics.CassandraMetricsRegistry.createMetricsKeyspaceTables;
+import static org.apache.cassandra.schema.SchemaConstants.VIRTUAL_METRICS;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -233,8 +238,8 @@ public abstract class CQLTester
     protected static int nativePort;
     protected static final InetAddress nativeAddr;
     protected static final Set<InetAddressAndPort> remoteAddrs = new HashSet<>();
-    private static final Map<Pair<User, ProtocolVersion>, Cluster> clusters = new HashMap<>();
-    private static final Map<Pair<User, ProtocolVersion>, Session> sessions = new HashMap<>();
+    private static final Map<ClusterSettings, Cluster> clusters = new HashMap<>();
+    private static final Map<ClusterSettings, Session> sessions = new HashMap<>();
 
     private static Consumer<Cluster.Builder> clusterBuilderConfigurator;
 
@@ -275,6 +280,7 @@ public abstract class CQLTester
         checkProtocolVersion();
 
         nativeAddr = InetAddress.getLoopbackAddress();
+        nativePort = getAutomaticallyAllocatedPort(nativeAddr);
     }
 
     private List<String> keyspaces = new ArrayList<>();
@@ -285,6 +291,10 @@ public abstract class CQLTester
     private List<String> aggregates = new ArrayList<>();
 
     private User user;
+
+    private boolean useEncryption = false;
+
+    private boolean useClientCert = false;
 
     // We don't use USE_PREPARED_VALUES in the code below so some test can foce value preparation (if the result
     // is not expected to be the same without preparation)
@@ -397,16 +407,26 @@ public abstract class CQLTester
         return new JMXServiceURL(String.format("service:jmx:rmi:///jndi/rmi://%s:%d/jmxrmi", jmxHost, jmxPort));
     }
 
+    /**
+     * If a fixture needs to use a specific partitioner other than M3P, it should shadow this method
+     * with an implementation like:
+     *     @BeforeClass
+     *     public static void setUpClass()     // overrides CQLTester.setUpClass()
+     *     {
+     *         daemonInitialization();
+     *         DatabaseDescriptor.setPartitionerUnsafe(ByteOrderedPartitioner.instance);
+     *         prepareServer();
+     *     }
+     */
     @BeforeClass
     public static void setUpClass()
     {
         CassandraRelevantProperties.SUPERUSER_SETUP_DELAY_MS.setLong(0);
         ServerTestUtils.daemonInitialization();
-
         if (ROW_CACHE_SIZE_IN_MIB > 0)
             DatabaseDescriptor.setRowCacheSizeInMiB(ROW_CACHE_SIZE_IN_MIB);
+        StorageService.instance.registerMBeans();
         StorageService.instance.setPartitionerUnsafe(Murmur3Partitioner.instance);
-
         // Once per-JVM is enough
         prepareServer();
     }
@@ -427,14 +447,11 @@ public abstract class CQLTester
         if (reusePrepared)
             QueryProcessor.clearInternalStatementsCache();
 
-        TokenMetadata metadata = StorageService.instance.getTokenMetadata();
-        metadata.clearUnsafe();
-
         if (jmxServer != null && jmxServer instanceof RMIConnectorServer)
         {
             try
             {
-                ((RMIConnectorServer) jmxServer).stop();
+                jmxServer.stop();
             }
             catch (IOException e)
             {
@@ -453,18 +470,11 @@ public abstract class CQLTester
     @After
     public void afterTest() throws Throwable
     {
-        dropPerTestKeyspace();
-
+        ServerTestUtils.resetCMS();
         // Restore standard behavior in case it was changed
         usePrepared = USE_PREPARED_VALUES;
         reusePrepared = REUSE_PREPARED;
 
-        final List<String> keyspacesToDrop = copy(keyspaces);
-        final List<String> tablesToDrop = copy(tables);
-        final List<String> viewsToDrop = copy(views);
-        final List<String> typesToDrop = copy(types);
-        final List<String> functionsToDrop = copy(functions);
-        final List<String> aggregatesToDrop = copy(aggregates);
         keyspaces = null;
         tables = null;
         views = null;
@@ -472,62 +482,19 @@ public abstract class CQLTester
         functions = null;
         aggregates = null;
         user = null;
+    }
 
-        // We want to clean up after the test, but dropping a table is rather long so just do that asynchronously
-        ScheduledExecutors.optionalTasks.execute(new Runnable()
-        {
-            public void run()
-            {
-                try
-                {
-                    for (int i = viewsToDrop.size() - 1; i >= 0; i--)
-                        schemaChange(String.format("DROP MATERIALIZED VIEW IF EXISTS %s.%s", KEYSPACE, viewsToDrop.get(i)));
-
-                    for (int i = tablesToDrop.size() - 1; i >= 0; i--)
-                        schemaChange(String.format("DROP TABLE IF EXISTS %s.%s", KEYSPACE, tablesToDrop.get(i)));
-
-                    for (int i = aggregatesToDrop.size() - 1; i >= 0; i--)
-                        schemaChange(String.format("DROP AGGREGATE IF EXISTS %s", aggregatesToDrop.get(i)));
-
-                    for (int i = functionsToDrop.size() - 1; i >= 0; i--)
-                        schemaChange(String.format("DROP FUNCTION IF EXISTS %s", functionsToDrop.get(i)));
-
-                    for (int i = typesToDrop.size() - 1; i >= 0; i--)
-                        schemaChange(String.format("DROP TYPE IF EXISTS %s.%s", KEYSPACE, typesToDrop.get(i)));
-
-                    for (int i = keyspacesToDrop.size() - 1; i >= 0; i--)
-                        schemaChange(String.format("DROP KEYSPACE IF EXISTS %s", keyspacesToDrop.get(i)));
-
-                    // Dropping doesn't delete the sstables. It's not a huge deal but it's cleaner to cleanup after us
-                    // Thas said, we shouldn't delete blindly before the TransactionLogs.SSTableTidier for the table we drop
-                    // have run or they will be unhappy. Since those taks are scheduled on StorageService.tasks and that's
-                    // mono-threaded, just push a task on the queue to find when it's empty. No perfect but good enough.
-
-                    final CountDownLatch latch = new CountDownLatch(1);
-                    ScheduledExecutors.nonPeriodicTasks.execute(new Runnable()
-                    {
-                        public void run()
-                        {
-                            latch.countDown();
-                        }
-                    });
-                    latch.await(2, TimeUnit.SECONDS);
-
-                    removeAllSSTables(KEYSPACE, tablesToDrop);
-                }
-                catch (Exception e)
-                {
-                    throw new RuntimeException(e);
-                }
-            }
-        });
+    protected static void addMetricsKeyspace()
+    {
+        VirtualKeyspaceRegistry.instance.register(new VirtualKeyspace(VIRTUAL_METRICS, createMetricsKeyspaceTables()));
     }
 
     protected void resetSchema() throws Throwable
     {
         for (TableMetadata table : SchemaKeyspace.metadata().tables)
             execute(String.format("TRUNCATE %s", table));
-        Schema.instance.loadFromDisk();
+        // TODO Fix this by resetting schema via CMS
+//        Schema.instance.loadFromDisk();
         beforeTest();
     }
 
@@ -571,7 +538,12 @@ public abstract class CQLTester
 
     protected static void requireAuthentication()
     {
-        DatabaseDescriptor.setAuthenticator(new AuthTestUtils.LocalPasswordAuthenticator());
+        requireAuthentication(new AuthTestUtils.LocalPasswordAuthenticator());
+    }
+
+    protected static void requireAuthentication(final IAuthenticator authenticator)
+    {
+        DatabaseDescriptor.setAuthenticator(authenticator);
         DatabaseDescriptor.setAuthorizer(new AuthTestUtils.LocalCassandraAuthorizer());
         DatabaseDescriptor.setNetworkAuthorizer(new AuthTestUtils.LocalCassandraNetworkAuthorizer());
         DatabaseDescriptor.setCIDRAuthorizer(new AuthTestUtils.LocalCassandraCIDRAuthorizer());
@@ -583,12 +555,14 @@ public abstract class CQLTester
             public void setup()
             {
                 loadRoleStatement();
+                loadIdentityStatement();
                 QueryProcessor.executeInternal(createDefaultRoleQuery());
             }
         };
 
         DatabaseDescriptor.setRoleManager(roleManager);
-        SchemaTestUtil.addOrUpdateKeyspace(AuthKeyspace.metadata(), true);
+        //TODO
+        //MigrationManager.announceNewKeyspace(AuthKeyspace.metadata(), true);
         DatabaseDescriptor.getRoleManager().setup();
         DatabaseDescriptor.getAuthenticator().setup();
         DatabaseDescriptor.getAuthorizer().setup();
@@ -600,9 +574,45 @@ public abstract class CQLTester
     }
 
     /**
+     * @param useEncryption Whether created clients should use encryption.
+     */
+    public void shouldUseEncryption(boolean useEncryption)
+    {
+        this.useEncryption = useEncryption;
+    }
+
+    /**
+     * @param useClientCert Whether created clients should provide a client cert if encryption is enabled.
+     */
+    public void shouldUseClientCertificate(boolean useClientCert)
+    {
+        this.useClientCert = useClientCert;
+    }
+
+    /**
+     * Configures the server to require client encryption for CQL.  Useful for tests which exercise TLS specific
+     * behavior.
+     * <p>
+     * Note to use this appropriately, {@link #requireNetwork} should be given a server configurator configured
+     * with {@link Server.Builder#withTlsEncryptionPolicy(EncryptionOptions.TlsEncryptionPolicy)} using
+     * {@link org.apache.cassandra.config.EncryptionOptions.TlsEncryptionPolicy#ENCRYPTED}.
+     */
+    public static void requireNativeProtocolClientEncryption()
+    {
+        DatabaseDescriptor.updateNativeProtocolEncryptionOptions((encryptionOptions) ->
+                                                                 encryptionOptions.withEnabled(true)
+                                                                                  .withKeyStore(TlsTestUtils.SERVER_KEYSTORE_PATH)
+                                                                                  .withKeyStorePassword(TlsTestUtils.SERVER_KEYSTORE_PASSWORD)
+                                                                                  .withTrustStore(TlsTestUtils.SERVER_TRUSTSTORE_PATH)
+                                                                                  .withTrustStorePassword(TlsTestUtils.SERVER_TRUSTSTORE_PASSWORD)
+                                                                                  .withRequireEndpointVerification(false)
+                                                                                  .withRequireClientAuth(EncryptionOptions.ClientAuth.OPTIONAL));
+    }
+
+    /**
      *  Initialize Native Transport for test that need it.
      */
-    protected static void requireNetwork() throws ConfigurationException
+    public static void requireNetwork() throws ConfigurationException
     {
         requireNetwork(server -> {}, cluster -> {});
     }
@@ -625,6 +635,7 @@ public abstract class CQLTester
     private static void startServices()
     {
         VirtualKeyspaceRegistry.instance.register(VirtualSchemaKeyspace.instance);
+        MessagingService.instance().waitUntilListeningUnchecked();
         StorageService.instance.initServer();
         SchemaLoader.startGossiper();
     }
@@ -662,11 +673,11 @@ public abstract class CQLTester
         Server.Builder serverBuilder = new Server.Builder().withHost(nativeAddr).withPort(nativePort);
         decorator.accept(serverBuilder);
         server = serverBuilder.build();
-        ClientMetrics.instance.init(Collections.singleton(server));
+        ClientMetrics.instance.init(server);
         server.start();
     }
 
-    private static Cluster initClientCluster(User user, ProtocolVersion version)
+    private static Cluster initClientCluster(User user, ProtocolVersion version, boolean useEncryption, boolean useClientCert)
     {
         SocketOptions socketOptions =
                 new SocketOptions().setConnectTimeoutMillis(TEST_DRIVER_CONNECTION_TIMEOUT_MS.getInt()) // default is 5000
@@ -684,6 +695,19 @@ public abstract class CQLTester
 
         if (user != null)
             builder.withCredentials(user.username, user.password);
+
+        if (useEncryption)
+        {
+            try
+            {
+                builder.withSSL(TlsTestUtils.getSSLOptions(useClientCert));
+            }
+            catch (SSLException e)
+            {
+                // generally this should work.
+                throw new RuntimeException(e);
+            }
+        }
 
         if (version.isBeta())
             builder = builder.allowBetaProtocolVersion();
@@ -1490,7 +1514,9 @@ public abstract class CQLTester
 
             QueryOptions options = QueryOptions.forInternalCalls(Collections.<ByteBuffer>emptyList());
 
-            return statement.executeLocally(queryState, options);
+            ResultMessage result = statement.executeLocally(queryState, options);
+            ClusterMetadataService.instance().log().waitForHighestConsecutive();
+            return result;
         }
         catch (Exception e)
         {
@@ -1561,12 +1587,12 @@ public abstract class CQLTester
     private Session getSession(ProtocolVersion protocolVersion)
     {
         Cluster cluster = getCluster(protocolVersion);
-        return sessions.computeIfAbsent(Pair.create(user, protocolVersion), userProto -> cluster.connect());
+        return sessions.computeIfAbsent(new ClusterSettings(user, protocolVersion, useEncryption, useClientCert), settings -> cluster.connect());
     }
 
-    private Cluster getCluster(ProtocolVersion protocolVersion)
+    protected Cluster getCluster(ProtocolVersion protocolVersion)
     {
-        return clusters.computeIfAbsent(Pair.create(user, protocolVersion), userProto -> initClientCluster(userProto.left, userProto.right));
+        return clusters.computeIfAbsent(new ClusterSettings(user, protocolVersion, useEncryption, useClientCert), settings -> initClientCluster(user, protocolVersion, useEncryption, useClientCert));
     }
 
     protected SimpleClient newSimpleClient(ProtocolVersion version) throws IOException
@@ -1750,6 +1776,96 @@ public abstract class CQLTester
                                         rows.length>i ? "less" : "more", rows.length, i, protocolVersion), i == rows.length);
     }
 
+    public void assertRowsContains(ResultSet result, Object[]... rows)
+    {
+        assertRowsContains(getCluster(getDefaultVersion()), result, rows);
+    }
+
+    public void assertRowsContains(ResultSet result, List<Object[]> rows)
+    {
+        assertRowsContains(getCluster(getDefaultVersion()), result, rows);
+    }
+
+    public static void assertRowsContains(Cluster cluster, ResultSet result, Object[]... rows)
+    {
+        assertRowsContains(cluster, result, rows == null ? Collections.emptyList() : Arrays.asList(rows));
+    }
+
+    public static void assertRowsContains(Cluster cluster, ResultSet result, List<Object[]> rows)
+    {
+        if (result == null && rows.isEmpty())
+            return;
+        assertNotNull(String.format("No rows returned by query but %d expected", rows.size()), result);
+        assertTrue(result.iterator().hasNext());
+
+        // It is necessary that all rows match the column definitions
+        for (Object[] row : rows)
+        {
+            if (row == null || row.length == 0)
+                Assert.fail("Rows must not be null or empty");
+
+            if (result.getColumnDefinitions().size() == row.length)
+                continue;
+
+            Assert.fail(String.format("Rows do not match column definitions. Expected %d columns but got %d",
+                                      result.getColumnDefinitions().size(), row.length));
+        }
+
+        ColumnDefinitions defs = result.getColumnDefinitions();
+        int size = defs.size();
+        List<ByteBuffer[]> resultSetValues = StreamSupport.stream(result.spliterator(), false)
+                .map(row -> IntStream.range(0, size)
+                                .mapToObj(row::getBytesUnsafe)
+                                .toArray(ByteBuffer[]::new))
+                .collect(Collectors.toList());
+
+        AtomicInteger columnCounter = new AtomicInteger();
+        com.datastax.driver.core.ProtocolVersion version = com.datastax.driver.core.ProtocolVersion.fromInt(getDefaultVersion().asInt());
+        List<ByteBuffer[]> expectedRowsValues = rows.stream()
+                .map(row -> Stream.of(row)
+                        .map(cell -> {
+                            int index = columnCounter.getAndIncrement() % size;
+                            return cell instanceof ByteBuffer ? (ByteBuffer) cell :
+                                    cluster.getConfiguration()
+                                            .getCodecRegistry()
+                                            .codecFor(defs.getType(index))
+                                            .serialize(cell, version);
+                        })
+                        .toArray(ByteBuffer[]::new))
+                .collect(Collectors.toList());
+
+        int found = 0;
+        for (ByteBuffer[] expected : expectedRowsValues)
+            for (ByteBuffer[] actual : resultSetValues)
+                if (Arrays.equals(expected, actual))
+                    found++;
+
+        if (found == expectedRowsValues.size())
+            return;
+
+        Assert.fail(String.format("Result set does not contain expected rows. Result set %s doesn't contain %s",
+                resultSetValues.stream().map(e -> deserializeCells(e, cluster.getConfiguration().getCodecRegistry(),
+                        result.getColumnDefinitions(), version)).collect(Collectors.joining(", ")),
+                expectedRowsValues.stream().map(e -> deserializeCells(e, cluster.getConfiguration().getCodecRegistry(),
+                        result.getColumnDefinitions(), version)).collect(Collectors.joining(", "))));
+    }
+
+    private static String deserializeCells(ByteBuffer[] row,
+                                           com.datastax.driver.core.CodecRegistry codecRegistry,
+                                           ColumnDefinitions columnDefinitions,
+                                           com.datastax.driver.core.ProtocolVersion version)
+    {
+        AtomicInteger index = new AtomicInteger();
+        int size = columnDefinitions.size();
+        return Stream.of(row)
+                .map(b -> {
+                    int idx = index.getAndIncrement() % size;
+                    TypeCodec<Object> codec = codecRegistry.codecFor(columnDefinitions.getType(idx));
+                    return codec.format(codec.deserialize(b, version));
+                })
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
+
     private static String safeToString(Supplier<String> fn)
     {
         try
@@ -1772,8 +1888,8 @@ public abstract class CQLTester
         // If the user writes a null for each column, then the whole tuple is null
         if (type.isUDT() && actualValue == null)
         {
-            ByteBuffer[] cells = ((TupleType) type).split(ByteBufferAccessor.instance, expectedByteValue);
-            return Stream.of(cells).allMatch(b -> b == null);
+            List<ByteBuffer> cells = ((TupleType) type).unpack(expectedByteValue);
+            return cells.stream().allMatch(java.util.Objects::isNull);
         }
         return false;
     }
@@ -2254,7 +2370,8 @@ public abstract class CQLTester
     }
 
     @FunctionalInterface
-    public interface CheckedFunction {
+    public interface CheckedFunction
+    {
         void apply() throws Throwable;
     }
 
@@ -2736,10 +2853,15 @@ public abstract class CQLTester
 
         public ByteBuffer toByteBuffer()
         {
-            ByteBuffer[] bbs = new ByteBuffer[values.length];
-            for (int i = 0; i < values.length; i++)
-                bbs[i] = makeByteBuffer(values[i], typeFor(values[i]));
-            return TupleType.buildValue(bbs);
+            List<AbstractType<?>> types = new ArrayList<>(values.length);
+            List<ByteBuffer> bbs = new ArrayList<>(values.length);
+            for (Object value : values)
+            {
+                AbstractType<?> type = typeFor(value);
+                types.add(type);
+                bbs.add(makeByteBuffer(value, type));
+            }
+            return new TupleType(types).pack(bbs);
         }
 
         public String toCQLString()
@@ -2881,6 +3003,37 @@ public abstract class CQLTester
             if (!cleanupFileSystemListeners)
                 return;
             fs.clearListeners();
+        }
+    }
+
+    private static class ClusterSettings
+    {
+        private final User user;
+        private final ProtocolVersion protocolVersion;
+        private final boolean shouldUseEncryption;
+        private final boolean shouldUseCertificate;
+
+        ClusterSettings(User user, ProtocolVersion protocolVersion, boolean shouldUseEncryption, boolean shouldUseCertificate)
+        {
+            this.user = user;
+            this.protocolVersion = protocolVersion;
+            this.shouldUseEncryption = shouldUseEncryption;
+            this.shouldUseCertificate = shouldUseCertificate;
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ClusterSettings that = (ClusterSettings) o;
+            return shouldUseEncryption == that.shouldUseEncryption && shouldUseCertificate == that.shouldUseCertificate && java.util.Objects.equals(user, that.user) && protocolVersion == that.protocolVersion;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return java.util.Objects.hash(user, protocolVersion, shouldUseEncryption, shouldUseCertificate);
         }
     }
 }

@@ -103,7 +103,6 @@ sed -i 's/^# hints_directory:/hints_directory:/' conf/cassandra.yaml
 rm -f bin/stop-server
 rm -f bin/*.orig
 rm -f bin/cassandra.in.sh
-rm -f lib/sigar-bin/*winnt*  # strip segfaults on dll..
 rm -f tools/bin/cassandra.in.sh
 
 # copy default configs
@@ -207,6 +206,7 @@ This package contains extra tools for working with Cassandra clusters.
 %attr(755,root,root) %{_bindir}/fqltool
 %attr(755,root,root) %{_bindir}/generatetokens
 %attr(755,root,root) %{_bindir}/hash_password
+%attr(755,root,root) %{_bindir}/addtocmstool
 
 
 %changelog

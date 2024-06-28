@@ -46,6 +46,7 @@ import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.service.pager.PagingState;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -124,7 +125,7 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
     }
 
     @Override
-    public final ResultMessage execute(QueryState state, QueryOptions options, long queryStartNanoTime) throws RequestValidationException, RequestExecutionException
+    public final ResultMessage execute(QueryState state, QueryOptions options, Dispatcher.RequestTime requestTime) throws RequestValidationException, RequestExecutionException
     {
         return executeLocally(state, options);
     }
@@ -132,13 +133,9 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
     @Override
     public ResultMessage executeLocally(QueryState state, QueryOptions options)
     {
-        DistributedSchema schema = Schema.instance.getDistributedSchemaBlocking();
-
-        Keyspaces keyspaces = Keyspaces.builder()
-                                       .add(schema.getKeyspaces())
-                                       .add(Schema.instance.getLocalKeyspaces())
-                                       .add(VirtualKeyspaceRegistry.instance.virtualKeyspacesMetadata())
-                                       .build();
+        Keyspaces keyspaces = Schema.instance.distributedAndLocalKeyspaces();
+        UUID schemaVersion = Schema.instance.getVersion();
+        keyspaces = keyspaces.with(VirtualKeyspaceRegistry.instance.virtualKeyspacesMetadata());
 
         PagingState pagingState = options.getPagingState();
 
@@ -156,7 +153,7 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
         //   (vint bytes) serialized schema hash (currently the result of Keyspaces.hashCode())
         //
 
-        long offset = getOffset(pagingState, schema.getVersion());
+        long offset = getOffset(pagingState, schemaVersion);
         int pageSize = options.getPageSize();
 
         Stream<? extends T> stream = describe(state.getClientState(), keyspaces);
@@ -173,7 +170,7 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
         ResultSet result = new ResultSet(resultMetadata, rows);
 
         if (pageSize > 0 && rows.size() == pageSize)
-            result.metadata.setHasMorePages(getPagingState(offset + pageSize, schema.getVersion()));
+            result.metadata.setHasMorePages(getPagingState(offset + pageSize, schemaVersion));
 
         return new ResultMessage.Rows(result);
     }
@@ -374,7 +371,7 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
                 return ImmutableList.of(bytes(element.elementKeyspaceQuotedIfNeeded()),
                                         bytes(element.elementType().toString()),
                                         bytes(element.elementNameQuotedIfNeeded()),
-                                        bytes(element.toCqlString(withInternals, false)));
+                                        bytes(element.toCqlString(true, withInternals, false)));
             }
         };
     }
@@ -424,7 +421,7 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
             return ImmutableList.of(bytes(element.elementKeyspaceQuotedIfNeeded()),
                                     bytes(element.elementType().toString()),
                                     bytes(element.elementNameQuotedIfNeeded()),
-                                    bytes(element.toCqlString(withInternals, false)));
+                                    bytes(element.toCqlString(true, withInternals, false)));
         }
     }
 
@@ -574,7 +571,7 @@ public abstract class DescribeStatement<T> extends CQLStatement.Raw implements C
                     }
 
                     @Override
-                    public String toCqlString(boolean withInternals, boolean ifNotExists)
+                    public String toCqlString(boolean withWarnings, boolean withInternals, boolean ifNotExists)
                     {
                         return index.toCqlString(table, ifNotExists);
                     }

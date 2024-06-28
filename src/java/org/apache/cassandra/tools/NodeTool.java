@@ -94,6 +94,7 @@ public class NodeTool
     public int execute(String... args)
     {
         List<Class<? extends NodeToolCmdRunnable>> commands = newArrayList(
+                AbortBootstrap.class,
                 Assassinate.class,
                 CassHelp.class,
                 CIDRFilteringStats.class,
@@ -256,6 +257,15 @@ public class NodeTool
                .withCommand(RepairAdmin.CleanupDataCmd.class)
                .withCommand(RepairAdmin.SummarizePendingCmd.class)
                .withCommand(RepairAdmin.SummarizeRepairedCmd.class);
+
+        builder.withGroup("cms")
+               .withDescription("Manage cluster metadata")
+               .withDefaultCommand(CMSAdmin.DescribeCMS.class)
+               .withCommand(CMSAdmin.DescribeCMS.class)
+               .withCommand(CMSAdmin.InitializeCMS.class)
+               .withCommand(CMSAdmin.ReconfigureCMS.class)
+               .withCommand(CMSAdmin.Snapshot.class)
+               .withCommand(CMSAdmin.Unregister.class);
 
         Cli<NodeToolCmdRunnable> parser = builder.build();
 

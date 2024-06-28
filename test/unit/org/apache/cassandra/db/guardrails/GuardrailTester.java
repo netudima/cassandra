@@ -51,13 +51,14 @@ import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.guardrails.GuardrailEvent.GuardrailEventType;
 import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.diag.DiagnosticEventService;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.sasi.SASIIndex;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.transport.ProtocolVersion;
 import org.apache.cassandra.transport.messages.ResultMessage;
-import org.apache.cassandra.utils.Clock;
 import org.assertj.core.api.Assertions;
 
 import static java.lang.String.format;
@@ -110,13 +111,11 @@ public abstract class GuardrailTester extends CQLTester
     }
 
     @BeforeClass
-    public static void setUpClass()
+    public static void setUpState()
     {
-        CQLTester.setUpClass();
         requireAuthentication();
         requireNetwork();
         DatabaseDescriptor.setDiagnosticEventsEnabled(true);
-
         systemClientState = ClientState.forInternalCalls();
 
         userClientState = ClientState.forExternalCalls(InetSocketAddress.createUnresolved("127.0.0.1", 123));
@@ -218,7 +217,7 @@ public abstract class GuardrailTester extends CQLTester
             listener.assertNotWarned();
             listener.assertNotFailed();
         }
-        catch (GuardrailViolatedException e)
+        catch (InvalidRequestException e)
         {
             fail("Expected not to fail, but failed with error message: " + e.getMessage());
         }
@@ -352,7 +351,7 @@ public abstract class GuardrailTester extends CQLTester
             if (thrown)
                 fail("Expected to fail, but it did not");
         }
-        catch (GuardrailViolatedException e)
+        catch (InvalidRequestException e) // TODO: this used to catch GuardrailViolatedException, but now we throw InvalidRequestException for all rejections in Schema#submit
         {
             assertTrue("Expect no exception thrown", thrown);
 
@@ -529,7 +528,7 @@ public abstract class GuardrailTester extends CQLTester
         CQLStatement statement = QueryProcessor.parseStatement(formattedQuery, queryState.getClientState());
         statement.validate(state);
 
-        return statement.execute(queryState, options, Clock.Global.nanoTime());
+        return statement.execute(queryState, options, Dispatcher.RequestTime.forImmediateExecution());
     }
 
     protected static String sortCSV(String csv)

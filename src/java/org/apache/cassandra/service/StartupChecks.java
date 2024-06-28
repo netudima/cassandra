@@ -73,7 +73,6 @@ import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JavaUtils;
 import org.apache.cassandra.utils.NativeLibrary;
-import org.apache.cassandra.utils.SigarLibrary;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.CASSANDRA_JMX_LOCAL_PORT;
 import static org.apache.cassandra.config.CassandraRelevantProperties.COM_SUN_MANAGEMENT_JMXREMOTE_PORT;
@@ -89,7 +88,7 @@ import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
  * Each individual test is modelled as an implementation of StartupCheck, these are run
  * at the start of CassandraDaemon#setup() before any local state is mutated. The default
  * checks are a mix of informational tests (inspectJvmOptions), initialization
- * (initSigarLibrary, checkCacheServiceInitialization) and invariant checking
+ * (checkProcessEnvironment, checkCacheServiceInitialization) and invariant checking
  * (checkValidLaunchDate, checkSystemKeyspaceState, checkSSTablesFormat).
  *
  * In addition, if checkSystemKeyspaceState determines that the release version has
@@ -108,8 +107,6 @@ public class StartupChecks
         // non-configurable check is always enabled for execution
         non_configurable_check,
         check_filesystem_ownership(true),
-        check_dc,
-        check_rack,
         check_data_resurrection(true);
 
         public final boolean disabledByDefault;
@@ -140,7 +137,7 @@ public class StartupChecks
                                                                       checkJMXProperties,
                                                                       inspectJvmOptions,
                                                                       checkNativeLibraryInitialization,
-                                                                      initSigarLibrary,
+                                                                      checkProcessEnvironment,
                                                                       checkMaxMapCount,
                                                                       checkReadAheadKbSetting,
                                                                       checkDataDirs,
@@ -419,14 +416,17 @@ public class StartupChecks
         }
     };
 
-    public static final StartupCheck initSigarLibrary = new StartupCheck()
+    public static final StartupCheck checkProcessEnvironment = new StartupCheck()
     {
         @Override
         public void execute(StartupChecksOptions options)
         {
-            if (options.isDisabled(getStartupCheckType()))
-                return;
-            SigarLibrary.instance.warnIfRunningInDegradedMode();
+            Optional<String> degradations = FBUtilities.getSystemInfo().isDegraded();
+
+            if (degradations.isPresent())
+                logger.warn("Cassandra server running in degraded mode. " + degradations.get());
+            else
+                logger.info("Checked OS settings and found them configured for optimal performance.");
         }
     };
 
@@ -738,35 +738,18 @@ public class StartupChecks
         @Override
         public void execute(StartupChecksOptions options) throws StartupException
         {
-            boolean enabled = options.isEnabled(getStartupCheckType());
-            if (CassandraRelevantProperties.IGNORE_DC.isPresent())
+            String storedDc = SystemKeyspace.getDatacenter();
+            if (storedDc != null)
             {
-                logger.warn(String.format("Cassandra system property flag %s is deprecated and you should " +
-                                          "use startup check configuration in cassandra.yaml",
-                                          CassandraRelevantProperties.IGNORE_DC.getKey()));
-                enabled = !CassandraRelevantProperties.IGNORE_DC.getBoolean();
-            }
-            if (enabled)
-            {
-                String storedDc = SystemKeyspace.getDatacenter();
-                if (storedDc != null)
+                String currentDc = DatabaseDescriptor.getEndpointSnitch().getLocalDatacenter();
+                if (!storedDc.equals(currentDc))
                 {
-                    String currentDc = DatabaseDescriptor.getEndpointSnitch().getLocalDatacenter();
-                    if (!storedDc.equals(currentDc))
-                    {
-                        String formatMessage = "Cannot start node if snitch's data center (%s) differs from previous data center (%s). " +
-                                               "Please fix the snitch configuration, decommission and rebootstrap this node or use the flag -Dcassandra.ignore_dc=true.";
+                    String formatMessage = "Cannot start node if snitch's data center (%s) differs from previous data center (%s). " +
+                                           "Please fix the snitch configuration, decommission and rebootstrap this node";
 
-                        throw new StartupException(StartupException.ERR_WRONG_CONFIG, String.format(formatMessage, currentDc, storedDc));
-                    }
+                    throw new StartupException(StartupException.ERR_WRONG_CONFIG, String.format(formatMessage, currentDc, storedDc));
                 }
             }
-        }
-
-        @Override
-        public StartupCheckType getStartupCheckType()
-        {
-            return StartupCheckType.check_dc;
         }
     };
 
@@ -775,35 +758,18 @@ public class StartupChecks
         @Override
         public void execute(StartupChecksOptions options) throws StartupException
         {
-            boolean enabled = options.isEnabled(getStartupCheckType());
-            if (CassandraRelevantProperties.IGNORE_RACK.isPresent())
+            String storedRack = SystemKeyspace.getRack();
+            if (storedRack != null)
             {
-                logger.warn(String.format("Cassandra system property flag %s is deprecated and you should " +
-                                          "use startup check configuration in cassandra.yaml",
-                                          CassandraRelevantProperties.IGNORE_RACK.getKey()));
-                enabled = !CassandraRelevantProperties.IGNORE_RACK.getBoolean();
-            }
-            if (enabled)
-            {
-                String storedRack = SystemKeyspace.getRack();
-                if (storedRack != null)
+                String currentRack = DatabaseDescriptor.getEndpointSnitch().getLocalRack();
+                if (!storedRack.equals(currentRack))
                 {
-                    String currentRack = DatabaseDescriptor.getEndpointSnitch().getLocalRack();
-                    if (!storedRack.equals(currentRack))
-                    {
-                        String formatMessage = "Cannot start node if snitch's rack (%s) differs from previous rack (%s). " +
-                                               "Please fix the snitch configuration, decommission and rebootstrap this node or use the flag -Dcassandra.ignore_rack=true.";
+                    String formatMessage = "Cannot start node if snitch's rack (%s) differs from previous rack (%s). " +
+                                           "Please fix the snitch configuration, decommission and rebootstrap this node";
 
-                        throw new StartupException(StartupException.ERR_WRONG_CONFIG, String.format(formatMessage, currentRack, storedRack));
-                    }
+                    throw new StartupException(StartupException.ERR_WRONG_CONFIG, String.format(formatMessage, currentRack, storedRack));
                 }
             }
-        }
-
-        @Override
-        public StartupCheckType getStartupCheckType()
-        {
-            return StartupCheckType.check_rack;
         }
     };
 

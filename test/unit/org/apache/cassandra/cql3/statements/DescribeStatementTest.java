@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import com.google.common.collect.ImmutableList;
@@ -36,17 +37,17 @@ import org.apache.cassandra.cql3.CqlBuilder;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.index.internal.CassandraIndex;
 import org.apache.cassandra.locator.InetAddressAndPort;
-import org.apache.cassandra.locator.TokenMetadata;
 import org.apache.cassandra.schema.CompactionParams;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.transport.ProtocolVersion;
 
 import static java.lang.String.format;
 import static org.apache.cassandra.schema.SchemaConstants.AUTH_KEYSPACE_NAME;
 import static org.apache.cassandra.schema.SchemaConstants.DISTRIBUTED_KEYSPACE_NAME;
+import static org.apache.cassandra.schema.SchemaConstants.METADATA_KEYSPACE_NAME;
 import static org.apache.cassandra.schema.SchemaConstants.SCHEMA_KEYSPACE_NAME;
 import static org.apache.cassandra.schema.SchemaConstants.SYSTEM_KEYSPACE_NAME;
 import static org.apache.cassandra.schema.SchemaConstants.TRACE_KEYSPACE_NAME;
@@ -312,6 +313,7 @@ public class DescribeStatementTest extends CQLTester
                                                   row(KEYSPACE_PER_TEST, "keyspace", KEYSPACE_PER_TEST),
                                                   row(SYSTEM_KEYSPACE_NAME, "keyspace", SYSTEM_KEYSPACE_NAME),
                                                   row(AUTH_KEYSPACE_NAME, "keyspace", AUTH_KEYSPACE_NAME),
+                                                  row(METADATA_KEYSPACE_NAME, "keyspace", METADATA_KEYSPACE_NAME),
                                                   row(DISTRIBUTED_KEYSPACE_NAME, "keyspace", DISTRIBUTED_KEYSPACE_NAME),
                                                   row(SCHEMA_KEYSPACE_NAME, "keyspace", SCHEMA_KEYSPACE_NAME),
                                                   row(TRACE_KEYSPACE_NAME, "keyspace", TRACE_KEYSPACE_NAME),
@@ -456,10 +458,9 @@ public class DescribeStatementTest extends CQLTester
                               trimIfPresent(DatabaseDescriptor.getPartitionerName(), "org.apache.cassandra.dht."),
                               DatabaseDescriptor.getEndpointSnitch().getClass().getName()));
         }
-
-        TokenMetadata tokenMetadata = StorageService.instance.getTokenMetadata();
-        Token token = tokenMetadata.sortedTokens().get(0);
-        InetAddressAndPort addressAndPort = tokenMetadata.getAllEndpoints().iterator().next();
+        ClusterMetadata metadata = ClusterMetadata.current();
+        Token token = metadata.tokenMap.tokens().get(0);
+        InetAddressAndPort addressAndPort = metadata.directory.allAddresses().iterator().next();
 
         assertRowsNet(executeDescribeNet(KEYSPACE_PER_TEST, "DESCRIBE CLUSTER"),
                       row("Test Cluster",
@@ -1013,8 +1014,8 @@ public class DescribeStatementTest extends CQLTester
 
     private static String indexOutput(String index, String table, String col)
     {
-        if (DatabaseDescriptor.getDefaultSecondaryIndex() == CassandraIndex.NAME)
-            return format("CREATE INDEX %s ON %s.%s (%s);", index, "test", table, col);
+        if (Objects.equals(DatabaseDescriptor.getDefaultSecondaryIndex(), CassandraIndex.NAME))
+            return format("CREATE INDEX %s ON %s.%s (%s) USING '" + CassandraIndex.NAME + "';", index, "test", table, col);
         else
             return format("CREATE CUSTOM INDEX %s ON %s.%s (%s) USING '%s';",
                           index, "test", table, col, DatabaseDescriptor.getDefaultSecondaryIndex());

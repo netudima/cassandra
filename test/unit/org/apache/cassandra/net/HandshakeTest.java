@@ -29,33 +29,38 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import com.google.common.net.InetAddresses;
-
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
-import org.apache.cassandra.config.ParameterizedClass;
-import org.apache.cassandra.db.commitlog.CommitLog;
-import org.apache.cassandra.gms.GossipDigestSyn;
-import org.apache.cassandra.locator.InetAddressAndPort;
-import org.apache.cassandra.net.OutboundConnectionInitiator.Result.MessagingSuccess;
-import org.apache.cassandra.security.DefaultSslContextFactory;
-import org.apache.cassandra.utils.concurrent.AsyncPromise;
-
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
 import io.netty.channel.EventLoop;
 import io.netty.util.concurrent.Future;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
+import org.apache.cassandra.config.ParameterizedClass;
+import org.apache.cassandra.db.commitlog.CommitLog;
+import org.apache.cassandra.distributed.test.log.ClusterMetadataTestHelper;
+import org.apache.cassandra.gms.GossipDigestSyn;
+import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.net.OutboundConnectionInitiator.Result.MessagingSuccess;
+import org.apache.cassandra.security.DefaultSslContextFactory;
+import org.apache.cassandra.transport.TlsTestUtils;
+import org.apache.cassandra.utils.concurrent.AsyncPromise;
 
+import static org.apache.cassandra.net.ConnectionType.SMALL_MESSAGES;
+import static org.apache.cassandra.config.EncryptionOptions.ClientAuth.NOT_REQUIRED;
+import static org.apache.cassandra.config.EncryptionOptions.ClientAuth.REQUIRED;
 import static org.apache.cassandra.net.MessagingService.current_version;
 import static org.apache.cassandra.net.MessagingService.minimum_version;
-import static org.apache.cassandra.net.ConnectionType.SMALL_MESSAGES;
-import static org.apache.cassandra.net.OutboundConnectionInitiator.*;
-
+import static org.apache.cassandra.net.OutboundConnectionInitiator.Result;
+import static org.apache.cassandra.net.OutboundConnectionInitiator.SslFallbackConnectionType;
+import static org.apache.cassandra.net.OutboundConnectionInitiator.initiateMessaging;
+import static org.apache.cassandra.tcm.ClusterMetadata.EMPTY_METADATA_IDENTIFIER;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 // TODO: test failure due to exception, timeout, etc
 public class HandshakeTest
@@ -69,6 +74,7 @@ public class HandshakeTest
     public static void startup()
     {
         DatabaseDescriptor.daemonInitialization();
+        ClusterMetadataTestHelper.setInstanceForTest();
         CommitLog.instance.start();
     }
 
@@ -272,23 +278,23 @@ public class HandshakeTest
     private ServerEncryptionOptions getServerEncryptionOptions(SslFallbackConnectionType sslConnectionType, boolean optional)
     {
         ServerEncryptionOptions serverEncryptionOptions = new ServerEncryptionOptions().withOptional(optional)
-                                                                                       .withKeyStore("test/conf/cassandra_ssl_test.keystore")
-                                                                                       .withKeyStorePassword("cassandra")
-                                                                                       .withOutboundKeystore("test/conf/cassandra_ssl_test_outbound.keystore")
-                                                                                       .withOutboundKeystorePassword("cassandra")
-                                                                                       .withTrustStore("test/conf/cassandra_ssl_test.truststore")
-                                                                                       .withTrustStorePassword("cassandra")
+                                                                                       .withKeyStore(TlsTestUtils.SERVER_KEYSTORE_PATH)
+                                                                                       .withKeyStorePassword(TlsTestUtils.SERVER_KEYSTORE_PASSWORD)
+                                                                                       .withOutboundKeystore(TlsTestUtils.SERVER_OUTBOUND_KEYSTORE_PATH)
+                                                                                       .withOutboundKeystorePassword(TlsTestUtils.SERVER_OUTBOUND_KEYSTORE_PASSWORD)
+                                                                                       .withTrustStore(TlsTestUtils.SERVER_TRUSTSTORE_PATH)
+                                                                                       .withTrustStorePassword(TlsTestUtils.SERVER_TRUSTSTORE_PASSWORD)
                                                                                        .withSslContextFactory((new ParameterizedClass(DefaultSslContextFactory.class.getName(),
                                                                                                                                       new HashMap<>())));
         if (sslConnectionType == SslFallbackConnectionType.MTLS)
         {
             serverEncryptionOptions = serverEncryptionOptions.withInternodeEncryption(ServerEncryptionOptions.InternodeEncryption.all)
-                                                             .withRequireClientAuth(true);
+                                                             .withRequireClientAuth(REQUIRED);
         }
         else if (sslConnectionType == SslFallbackConnectionType.SSL)
         {
             serverEncryptionOptions = serverEncryptionOptions.withInternodeEncryption(ServerEncryptionOptions.InternodeEncryption.all)
-                                                             .withRequireClientAuth(false);
+                                                             .withRequireClientAuth(NOT_REQUIRED);
         }
         return serverEncryptionOptions;
     }
@@ -312,7 +318,7 @@ public class HandshakeTest
         .withDebugCallbacks(new HandshakeAcknowledgeChecker(t -> handshakeEx = t))
         .withFrom(FROM_ADDR);
         OutboundConnections outboundConnections = OutboundConnections.tryRegister(new ConcurrentHashMap<>(), TO_ADDR, settings);
-        GossipDigestSyn syn = new GossipDigestSyn("cluster", "partitioner", new ArrayList<>(0));
+        GossipDigestSyn syn = new GossipDigestSyn("cluster", "partitioner", EMPTY_METADATA_IDENTIFIER, new ArrayList<>(0));
         Message<GossipDigestSyn> message = Message.out(Verb.GOSSIP_DIGEST_SYN, syn);
         OutboundConnection outboundConnection = outboundConnections.connectionFor(message);
         outboundConnection.enqueue(message);

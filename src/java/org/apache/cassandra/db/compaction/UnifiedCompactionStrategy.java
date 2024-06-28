@@ -52,7 +52,7 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.schema.TableMetadata;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.utils.Clock;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Overlaps;
@@ -296,16 +296,24 @@ public class UnifiedCompactionStrategy extends AbstractCompactionStrategy
 
     private void maybeUpdateShardManager()
     {
-        if (shardManager != null && !shardManager.isOutOfDate(StorageService.instance.getTokenMetadata().getRingVersion()))
+        // TODO - modify ShardManager::isOutOfDate to take an Epoch
+        if (shardManager != null
+            && (cfs.localRangesWeighted().ringVersion == ColumnFamilyStore.RING_VERSION_IRRELEVANT
+                || !shardManager.isOutOfDate(ClusterMetadata.current().epoch.getEpoch())))
             return; // the disk boundaries (and thus the local ranges too) have not changed since the last time we calculated
 
         synchronized (this)
         {
             // Recheck after entering critical section, another thread may have beaten us to it.
-            while (shardManager == null || shardManager.isOutOfDate(StorageService.instance.getTokenMetadata().getRingVersion()))
+            while (shardManager == null ||
+                   // Short circuit for local keyspaces which may be initialised before ClusterMetadata
+                   (cfs.localRangesWeighted().ringVersion != ColumnFamilyStore.RING_VERSION_IRRELEVANT
+                    && shardManager.isOutOfDate(ClusterMetadata.current().epoch.getEpoch())))
+            {
                 shardManager = ShardManager.create(cfs);
-            // Note: this can just as well be done without the synchronization (races would be benign, just doing some
-            // redundant work). For the current usages of this blocking is fine and expected to perform no worse.
+                // Note: this can just as well be done without the synchronization (races would be benign, just doing some
+                // redundant work). For the current usages of this blocking is fine and expected to perform no worse.
+            }
         }
     }
 
@@ -579,8 +587,7 @@ public class UnifiedCompactionStrategy extends AbstractCompactionStrategy
 
         void complete()
         {
-            if (logger.isTraceEnabled())
-                logger.trace("Level: {}", this);
+            logger.trace("Level: {}", this);
         }
 
         /**
@@ -627,10 +634,7 @@ public class UnifiedCompactionStrategy extends AbstractCompactionStrategy
                              index, sstables.size(), maxOverlap, buckets.size(), estimatedRemainingTasks);
 
             CompactionPick selected = selectedBucket.constructPick(controller);
-
-            if (logger.isTraceEnabled())
-                logger.trace("Returning compaction pick with selected compaction {}",
-                             selected);
+            logger.trace("Returning compaction pick with selected compaction {}", selected);
             return selected;
         }
 
@@ -657,8 +661,7 @@ public class UnifiedCompactionStrategy extends AbstractCompactionStrategy
         {
             List<SSTableReader> liveSet = sstables;
 
-            if (logger.isTraceEnabled())
-                logger.trace("Creating compaction pick with live set {}", liveSet);
+            logger.trace("Creating compaction pick with live set {}", liveSet);
 
             List<Set<SSTableReader>> overlaps = Overlaps.constructOverlapSets(liveSet,
                                                                               UnifiedCompactionStrategy::startsAfter,
