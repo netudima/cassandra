@@ -1121,6 +1121,8 @@ public class Config
     public volatile long min_tracked_partition_tombstone_count = 5000;
     public volatile boolean top_partitions_enabled = true;
 
+    public int max_first_shallow_row_index_offsets_to_cache = 1024;
+
     public final RepairConfig repair = new RepairConfig();
 
     /**

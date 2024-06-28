@@ -760,7 +760,8 @@ public class RowIndexEntry extends AbstractRowIndexEntry
                                             VIntCoding.computeUnsignedVIntSize(indexedPartSize + fieldsSerializedSize) +
                                             fieldsSerializedSize,
                                             offsetsOffset - fieldsSerializedSize,
-                                            indexFile.createReader(), idxInfoSerializer);
+                                            indexFile.createReader(), idxInfoSerializer,
+                                            columnsIndexCount, DatabaseDescriptor.getMaxFirstShallowRowIndexOffsetsToCache());
         }
 
         @Override
@@ -815,21 +816,55 @@ public class RowIndexEntry extends AbstractRowIndexEntry
     {
         private final int offsetsOffset;
 
+        private final int columnsIndexCount;
+
+        private final int maxFirstShallowRowIndexOffsetsToCache;
+
+        private ByteBuffer ofssetsCache;
+
         private ShallowInfoRetriever(long indexInfoFilePosition, int offsetsOffset,
-                                     FileDataInput indexReader, ISerializer<IndexInfo> idxInfoSerializer)
+                                     FileDataInput indexReader, ISerializer<IndexInfo> idxInfoSerializer,
+                                     int columnsIndexCount, int maxFirstShallowRowIndexOffsetsToCache)
         {
             super(indexInfoFilePosition, indexReader, idxInfoSerializer);
             this.offsetsOffset = offsetsOffset;
+            this.columnsIndexCount = columnsIndexCount;
+            this.maxFirstShallowRowIndexOffsetsToCache = maxFirstShallowRowIndexOffsetsToCache;
         }
 
         @Override
         IndexInfo fetchIndex(int index) throws IOException
         {
-            // seek to position in "offsets to IndexInfo" table
-            indexReader.seek(indexInfoFilePosition + offsetsOffset + index * TypeSizes.INT_SIZE);
-
-            // read offset of IndexInfo
-            int indexInfoPos = indexReader.readInt();
+            int indexInfoPos;
+            // When we fetch an IndexInfo by index we have to do 2 file seeks:
+            // 1st: to find the offset of the IndexInfo by index
+            // 2nd to retrieve the IndexInfo data using the found offset
+            // These 2 items are located in the index file far away from each other, so they do not fit into one read cnunk.
+            // At the same time index data for subsequent index numbers are stored near each other.
+            // Same story is for offsets.
+            // Such jumping for seek positions between offsets area and index data area prevents efficient buffering for disk reads
+            // by caching offsets we avoid the seek jumping and use the buffered reading more efficiently
+            // the amount of cached offsets is limited to avoid high memory consumption/GC pressure
+            // in case of too big partitions.
+            if (index <= maxFirstShallowRowIndexOffsetsToCache)
+            {
+                if (ofssetsCache == null)
+                {
+                    int cachedOffsetsCount = Math.min(columnsIndexCount, maxFirstShallowRowIndexOffsetsToCache);
+                    byte[] ofssetsCacheArray = new byte[cachedOffsetsCount * TypeSizes.INT_SIZE];
+                    indexReader.seek(indexInfoFilePosition + offsetsOffset);
+                    indexReader.readFully(ofssetsCacheArray);
+                    ofssetsCache = ByteBuffer.wrap(ofssetsCacheArray);
+                }
+                indexInfoPos = ofssetsCache.getInt(index * TypeSizes.INT_SIZE);
+            }
+            else
+            {
+                // seek to position in "offsets to IndexInfo" table
+                indexReader.seek(indexInfoFilePosition + offsetsOffset + index * TypeSizes.INT_SIZE);
+                // read offset of IndexInfo
+                indexInfoPos = indexReader.readInt();
+            }
 
             // seek to posision of IndexInfo
             indexReader.seek(indexInfoFilePosition + indexInfoPos);

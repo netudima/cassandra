@@ -2005,6 +2005,10 @@ public class DatabaseDescriptor
         conf.column_index_cache_size = createIntKibibyteBoundAndEnsureItIsValidForByteConversion(val,"column_index_cache_size");
     }
 
+    public static int getMaxFirstShallowRowIndexOffsetsToCache() {
+        return conf.max_first_shallow_row_index_offsets_to_cache;
+    }
+
     public static int getBatchSizeWarnThreshold()
     {
         return conf.batch_size_warn_threshold.toBytes();
