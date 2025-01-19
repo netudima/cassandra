@@ -33,6 +33,7 @@ import io.netty.channel.EventLoop;
 import io.netty.util.AttributeKey;
 import org.apache.cassandra.concurrent.DebuggableTask;
 import org.apache.cassandra.concurrent.LocalAwareExecutorPlus;
+import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.metrics.ClientMetrics;
@@ -48,6 +49,7 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MonotonicClock;
 import org.apache.cassandra.utils.NoSpamLogger;
 
+import static org.apache.cassandra.concurrent.ExecutorFactory.Global.executorFactory;
 import static org.apache.cassandra.concurrent.SharedExecutorPool.SHARED;
 
 public class Dispatcher implements CQLMessageHandler.MessageConsumer<Message.Request>
@@ -55,10 +57,21 @@ public class Dispatcher implements CQLMessageHandler.MessageConsumer<Message.Req
     private static final Logger logger = LoggerFactory.getLogger(Dispatcher.class);
 
     @VisibleForTesting
-    static final LocalAwareExecutorPlus requestExecutor = SHARED.newExecutor(DatabaseDescriptor.getNativeTransportMaxThreads(),
-                                                                             DatabaseDescriptor::setNativeTransportMaxThreads,
-                                                                             "transport",
-                                                                             "Native-Transport-Requests");
+    static final LocalAwareExecutorPlus requestExecutor;
+    static {
+        String jmxType = "transport";
+        String name = "Native-Transport-Requests";
+        int threads = DatabaseDescriptor.getNativeTransportMaxThreads();
+        requestExecutor = CassandraRelevantProperties.SEP_EXECUTOR_DISABLED.getBoolean() ?
+          executorFactory()
+             .localAware()
+             .withJmx(jmxType)
+             .pooled(name, threads)
+        : SHARED.newExecutor(threads,
+              DatabaseDescriptor::setNativeTransportMaxThreads,
+              jmxType,
+              name);
+    }
 
     /** CASSANDRA-17812: Rate-limit new client connection setup to avoid overwhelming during bcrypt
      *

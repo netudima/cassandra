@@ -478,6 +478,7 @@ public enum CassandraRelevantProperties
      * The default used in SimpleSeedProvider is 20.
      */
     SEED_COUNT_WARN_THRESHOLD("cassandra.seed_count_warn_threshold"),
+    SEP_EXECUTOR_DISABLED("cassandra.sep_executor_disabled", "false"),
     SERIALIZATION_EMPTY_TYPE_NONEMPTY_BEHAVIOR("cassandra.serialization.emptytype.nonempty_behavior"),
     SET_SEP_THREAD_NAME("cassandra.set_sep_thread_name", "true"),
     SHUTDOWN_ANNOUNCE_DELAY_IN_MS("cassandra.shutdown_announce_in_ms", "2000"),
@@ -600,7 +601,6 @@ public enum CassandraRelevantProperties
     /** Gossiper compute expiration timeout. Default value 3 days. */
     VERY_LONG_TIME_MS("cassandra.very_long_time_ms", "259200000"),
     WAIT_FOR_TRACING_EVENTS_TIMEOUT_SECS("cassandra.wait_for_tracing_events_timeout_secs", "0");
-
     static
     {
         CassandraRelevantProperties[] values = CassandraRelevantProperties.values();

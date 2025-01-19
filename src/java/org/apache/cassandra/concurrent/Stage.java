@@ -39,6 +39,7 @@ import org.apache.cassandra.utils.concurrent.Future;
 
 import static java.util.stream.Collectors.toMap;
 import static org.apache.cassandra.concurrent.ExecutorFactory.Global.executorFactory;
+import static org.apache.cassandra.config.CassandraRelevantProperties.SEP_EXECUTOR_DISABLED;
 
 public enum Stage
 {
@@ -228,6 +229,8 @@ public enum Stage
 
     static LocalAwareExecutorPlus multiThreadedLowSignalStage(String jmxName, String jmxType, int numThreads, LocalAwareExecutorPlus.MaximumPoolSizeListener onSetMaximumPoolSize)
     {
+       if (SEP_EXECUTOR_DISABLED.getBoolean())
+           return multiThreadedStage(jmxName, jmxType, numThreads, onSetMaximumPoolSize);
         return executorFactory()
                 .localAware()
                 .withJmx(jmxType)
