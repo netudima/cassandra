@@ -396,6 +396,17 @@ def test(command, cell) {
                 archiveArtifacts artifacts: "${logfile}", fingerprint: true
               }
               if (0 != status) { error("Stage ${cell.step}${cell_suffix} failed with exit status ${status}") }
+            } catch (exc) {
+                def sw = new StringWriter()
+                def pw = new PrintWriter(sw)
+                exc.printStackTrace(pw)
+                echo "Failed with: ${exc.getMessage()} - ${sw.toString()}"
+                def cause = exc.getCause()
+                while (cause != null) {
+                    echo "  Caused by: ${cause.getClass().getName()} - ${cause.getMessage()}"
+                    cause = cause.getCause()
+                }
+                throw exc
             } finally {
                 def duration = System.currentTimeMillis() - timer
                 def formattedTime = String.format("%tT.%tL", duration, duration)
