@@ -409,6 +409,7 @@ def test(command, cell) {
                 if (exc.getClass().getName() == "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException") {
                    for (def causeOfInterruption in exc.getCauses()) {
                      echo "CauseOfInterruption: ${causeOfInterruption.getClass().getName()} - ${causeOfInterruption.getShortDescription()}"
+                   }
                 }
                 throw exc
             } finally {
