@@ -403,8 +403,12 @@ def test(command, cell) {
                 echo "Failed with: ${exc.getMessage()} - ${sw.toString()}"
                 def cause = exc.getCause()
                 while (cause != null) {
-                    echo "  Caused by: ${cause.getClass().getName()} - ${cause.getMessage()}"
-                    cause = cause.getCause()
+                  echo "  Caused by: ${cause.getClass().getName()} - ${cause.getMessage()}"
+                  cause = cause.getCause()
+                }
+                if (exc.getClass().getName() == "org.jenkinsci.plugins.workflow.steps.FlowInterruptedException") {
+                   for (def causeOfInterruption in exc.getCauses()) {
+                     echo "CauseOfInterruption: ${causeOfInterruption.getClass().getName()} - ${causeOfInterruption.getShortDescription()}"
                 }
                 throw exc
             } finally {
