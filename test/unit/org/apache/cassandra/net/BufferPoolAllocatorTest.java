@@ -26,6 +26,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.netty.buffer.ByteBuf;
+import org.apache.cassandra.config.DataStorageSpec;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.assertj.core.api.Assertions;
 
@@ -41,7 +42,7 @@ public class BufferPoolAllocatorTest
         DatabaseDescriptor.clientInitialization();
         // cache size hould be more than a macro chunk size for proper pool testing
         // if it is 0 or less than a macro chunk size we actually do not pool
-        DatabaseDescriptor.getRawConfig().networking_cache_size_in_mb = 128;
+        DatabaseDescriptor.getRawConfig().networking_cache_size = new DataStorageSpec.IntMebibytesBound(128);
     }
 
     @Test
