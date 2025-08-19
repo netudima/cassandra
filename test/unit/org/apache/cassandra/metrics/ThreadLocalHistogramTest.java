@@ -18,26 +18,32 @@
 
 package org.apache.cassandra.metrics;
 
-import com.codahale.metrics.Clock;
-import com.codahale.metrics.Snapshot;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class SnapshottingTimer extends ThreadLocalTimer
+public class ThreadLocalHistogramTest
 {
-    private final SnapshottingReservoir reservoir;
-    
-    public SnapshottingTimer(SnapshottingReservoir reservoir)
+    @Test
+    public void testBasicOperations()
     {
-        this(reservoir, Clock.defaultClock());
+        Histogram histogram = new ThreadLocalHistogram(new DecayingEstimatedHistogramReservoir());
+        histogram.update(10);
+        Assert.assertEquals(1, histogram.getCount());
+        histogram.update(20);
+        Assert.assertEquals(2, histogram.getCount());
+        histogram.update(100);
+        Assert.assertEquals(3, histogram.getCount());
     }
 
-    public SnapshottingTimer(SnapshottingReservoir reservoir, Clock clock)
+    @Test
+    public void testReset()
     {
-        super(reservoir, clock);
-        this.reservoir = reservoir;
-    }
-
-    public Snapshot getPercentileSnapshot()
-    {
-        return reservoir.getPercentileSnapshot();
+        ClearableHistogram histogram = new ClearableHistogram(new DecayingEstimatedHistogramReservoir());
+        histogram.update(1);
+        histogram.update(1);
+        histogram.update(1);
+        Assert.assertEquals(3, histogram.getCount());
+        histogram.reset();
+        Assert.assertEquals(0, histogram.getCount());
     }
 }

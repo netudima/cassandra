@@ -299,7 +299,26 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public Counter counter(MetricName... name)
     {
-        Counter counter = super.counter(name[0].getMetricName());
+        String simpleMetricName = name[0].getMetricName();
+        Metric metric = super.getMetrics().get(simpleMetricName);
+        if (metric instanceof Counter)
+            return (Counter) metric;
+
+        Counter counter = new ThreadLocalCounter();
+        super.register(simpleMetricName, counter);
+        Stream.of(name).forEach(n -> register(n, counter));
+        return counter;
+    }
+
+    public Counter atomicLongCounter(MetricName... name)
+    {
+        String simpleMetricName = name[0].getMetricName();
+        Metric metric = super.getMetrics().get(simpleMetricName);
+        if (metric instanceof Counter)
+            return (Counter) metric;
+
+        Counter counter = new AtomicLongCounter();
+        super.register(simpleMetricName, counter);
         Stream.of(name).forEach(n -> register(n, counter));
         return counter;
     }
@@ -311,7 +330,13 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public Meter meter(boolean gaugeCompatible, MetricName... name)
     {
-        Meter meter = super.meter(name[0].getMetricName());
+        String simpleMetricName = name[0].getMetricName();
+        Metric metric = super.getMetrics().get(simpleMetricName);
+        if (metric instanceof Meter)
+            return (Meter) metric;
+
+        Meter meter = new ThreadLocalMeter();
+        super.register(simpleMetricName, meter);
         Stream.of(name).forEach(n -> register(gaugeCompatible, n, meter));
         return meter;
     }
