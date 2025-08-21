@@ -18,6 +18,7 @@
 package org.apache.cassandra.tcm;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
@@ -34,6 +35,7 @@ import com.google.common.util.concurrent.Uninterruptibles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.codahale.metrics.jvm.ThreadDump;
 import org.apache.cassandra.config.CassandraRelevantProperties;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -219,7 +221,11 @@ import static org.apache.cassandra.utils.FBUtilities.getBroadcastAddressAndPort;
                 if (DatabaseDescriptor.getSeeds().contains(FBUtilities.getBroadcastAddressAndPort()))
                     min = FBUtilities.getBroadcastAddressAndPort();
                 else
+                {
+                    ThreadDump threadDump = new ThreadDump(ManagementFactory.getThreadMXBean());
+                    threadDump.dump(System.out);
                     throw new IllegalArgumentException(String.format("Found no candidates during initialization. Check if the seeds are up: %s", DatabaseDescriptor.getSeeds()));
+                }
             }
             else
             {
