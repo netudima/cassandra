@@ -23,6 +23,9 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.codahale.metrics.Clock;
 import com.codahale.metrics.ExponentiallyDecayingReservoir;
 import com.codahale.metrics.Reservoir;
@@ -37,6 +40,9 @@ import com.codahale.metrics.Snapshot;
  */
 public class ThreadLocalTimer extends com.codahale.metrics.Timer implements Timer
 {
+    private static final Logger logger = LoggerFactory.getLogger(ThreadLocalTimer.class);
+
+
     private final Meter meter;
     private final ThreadLocalHistogram histogram;
     private final Clock clock; // usually we need precise clocks for timing
@@ -214,10 +220,18 @@ public class ThreadLocalTimer extends com.codahale.metrics.Timer implements Time
 
     private void update(long duration)
     {
-        if (duration >= 0)
+        try
         {
-            histogram.update(duration);
-            meter.mark();
+            if (duration >= 0)
+            {
+                histogram.update(duration);
+                meter.mark();
+            }
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
         }
     }
 }

@@ -18,6 +18,9 @@
 
 package org.apache.cassandra.metrics;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.codahale.metrics.Reservoir;
 import com.codahale.metrics.Snapshot;
 import org.apache.cassandra.utils.ReflectionUtils;
@@ -32,6 +35,7 @@ import org.apache.cassandra.utils.ReflectionUtils;
  */
 public class ThreadLocalHistogram extends com.codahale.metrics.Histogram implements Histogram
 {
+    private static final Logger logger = LoggerFactory.getLogger(ThreadLocalHistogram.class);
     private final Reservoir reservoir;
     private final int countMetricId;
 
@@ -43,10 +47,18 @@ public class ThreadLocalHistogram extends com.codahale.metrics.Histogram impleme
     public ThreadLocalHistogram(Reservoir reservoir)
     {
         super(reservoir);
-        this.reservoir = reservoir;
-        this.countMetricId = ThreadLocalMetrics.allocateMetricId();
-        ThreadLocalMetrics.destroyWhenUnreachable(this, countMetricId);
-        ReflectionUtils.setFieldToNull(this, "count"); // reduce metrics memory footprint
+        try
+        {
+            this.reservoir = reservoir;
+            this.countMetricId = ThreadLocalMetrics.allocateMetricId();
+            ThreadLocalMetrics.destroyWhenUnreachable(this, countMetricId);
+            ReflectionUtils.setFieldToNull(this, "count"); // reduce metrics memory footprint
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     /**
@@ -56,7 +68,15 @@ public class ThreadLocalHistogram extends com.codahale.metrics.Histogram impleme
      */
     public void update(int value)
     {
-        update((long) value);
+        try
+        {
+            update((long) value);
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     /**
@@ -66,8 +86,16 @@ public class ThreadLocalHistogram extends com.codahale.metrics.Histogram impleme
      */
     public void update(long value)
     {
-        ThreadLocalMetrics.add(countMetricId, 1);
-        reservoir.update(value);
+        try
+        {
+            ThreadLocalMetrics.add(countMetricId, 1);
+            reservoir.update(value);
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     /**
@@ -78,17 +106,41 @@ public class ThreadLocalHistogram extends com.codahale.metrics.Histogram impleme
     @Override
     public long getCount()
     {
-        return ThreadLocalMetrics.getCount(countMetricId);
+        try
+        {
+            return ThreadLocalMetrics.getCount(countMetricId);
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     public void reset()
     {
-        ThreadLocalMetrics.getCountAndReset(countMetricId);
+        try
+        {
+            ThreadLocalMetrics.getCountAndReset(countMetricId);
+        }
+        catch (Throwable e)
+        {
+             logger.error("fail", e);
+            throw e;
+        }
     }
 
     @Override
     public Snapshot getSnapshot()
     {
+        try
+        {
         return reservoir.getSnapshot();
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 }

@@ -39,6 +39,9 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Histogram;
@@ -87,6 +90,8 @@ import static org.apache.cassandra.utils.LocalizeString.toLowerCaseLocalized;
  */
 public class CassandraMetricsRegistry extends MetricRegistry
 {
+    private static final Logger logger = LoggerFactory.getLogger(CassandraMetricsRegistry.class);
+
     public static final UnaryOperator<String> METRICS_GROUP_POSTFIX = name -> name + "_group";
 
     /** A set of all known metric groups, used to validate metric groups that are statically defined in Cassandra. */
@@ -299,28 +304,44 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public Counter counter(MetricName... name)
     {
-        String simpleMetricName = name[0].getMetricName();
-        Metric metric = super.getMetrics().get(simpleMetricName);
-        if (metric instanceof Counter)
-            return (Counter) metric;
+        try
+        {
+            String simpleMetricName = name[0].getMetricName();
+            Metric metric = super.getMetrics().get(simpleMetricName);
+            if (metric instanceof Counter)
+                return (Counter) metric;
 
-        Counter counter = new ThreadLocalCounter();
-        super.register(simpleMetricName, counter);
-        Stream.of(name).forEach(n -> register(n, counter));
-        return counter;
+            Counter counter = new ThreadLocalCounter();
+            super.register(simpleMetricName, counter);
+            Stream.of(name).forEach(n -> register(n, counter));
+            return counter;
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     public Counter atomicLongCounter(MetricName... name)
     {
-        String simpleMetricName = name[0].getMetricName();
-        Metric metric = super.getMetrics().get(simpleMetricName);
-        if (metric instanceof Counter)
-            return (Counter) metric;
+        try
+        {
+            String simpleMetricName = name[0].getMetricName();
+            Metric metric = super.getMetrics().get(simpleMetricName);
+            if (metric instanceof Counter)
+                return (Counter) metric;
 
-        Counter counter = new AtomicLongCounter();
-        super.register(simpleMetricName, counter);
-        Stream.of(name).forEach(n -> register(n, counter));
-        return counter;
+            Counter counter = new AtomicLongCounter();
+            super.register(simpleMetricName, counter);
+            Stream.of(name).forEach(n -> register(n, counter));
+            return counter;
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     public Meter meter(MetricName... name)
@@ -330,20 +351,36 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     public Meter meter(boolean gaugeCompatible, MetricName... name)
     {
-        String simpleMetricName = name[0].getMetricName();
-        Metric metric = super.getMetrics().get(simpleMetricName);
-        if (metric instanceof Meter)
-            return (Meter) metric;
+        try
+        {
+            String simpleMetricName = name[0].getMetricName();
+            Metric metric = super.getMetrics().get(simpleMetricName);
+            if (metric instanceof Meter)
+                return (Meter) metric;
 
-        Meter meter = new ThreadLocalMeter();
-        super.register(simpleMetricName, meter);
-        Stream.of(name).forEach(n -> register(gaugeCompatible, n, meter));
-        return meter;
+            Meter meter = new ThreadLocalMeter();
+            super.register(simpleMetricName, meter);
+            Stream.of(name).forEach(n -> register(gaugeCompatible, n, meter));
+            return meter;
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     public Histogram histogram(MetricName name, boolean considerZeroes)
     {
-        return register(name, new ClearableHistogram(new DecayingEstimatedHistogramReservoir(considerZeroes)));
+        try
+        {
+            return register(name, new ClearableHistogram(new DecayingEstimatedHistogramReservoir(considerZeroes)));
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     public Histogram histogram(MetricName name, MetricName alias, boolean considerZeroes)
@@ -377,7 +414,15 @@ public class CassandraMetricsRegistry extends MetricRegistry
 
     private SnapshottingTimer timer(MetricName name, TimeUnit durationUnit)
     {
-        return register(name, new SnapshottingTimer(CassandraMetricsRegistry.createReservoir(durationUnit)));
+        try
+        {
+            return register(name, new SnapshottingTimer(CassandraMetricsRegistry.createReservoir(durationUnit)));
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     public SnapshottingTimer timer(MetricName name, MetricName alias, TimeUnit durationUnit)

@@ -28,6 +28,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.codahale.metrics.Clock;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.utils.MonotonicClock;
@@ -49,6 +52,8 @@ import static java.lang.Math.exp;
  */
 public class ThreadLocalMeter extends com.codahale.metrics.Meter implements Meter
 {
+    private static final Logger logger = LoggerFactory.getLogger(ThreadLocalMeter.class);
+
     private static final int INTERVAL_SEC = 5;
     private static final long TICK_INTERVAL_NS = TimeUnit.SECONDS.toNanos(INTERVAL_SEC);
     private static final double SECONDS_PER_MINUTE = 60.0;
@@ -159,15 +164,23 @@ public class ThreadLocalMeter extends com.codahale.metrics.Meter implements Mete
     public ThreadLocalMeter(MonotonicClock clock)
     {
         super(null, Clock.defaultClock()); // reduce metrics memory footprint
-        this.clock = clock;
-        this.startTime = this.clock.now();
-        this.lastTick = this.startTime;
-        this.countMetricId = ThreadLocalMetrics.allocateMetricId();
-        this.uncountedMetricId = ThreadLocalMetrics.allocateMetricId();
-        this.rateGroupId = allocateRateGroupOffset();
-        allMeters.add(new WeakReference<>(this));
-        ThreadLocalMetrics.destroyWhenUnreachable(this, new MeterCleaner(countMetricId, uncountedMetricId, rateGroupId));
-        ReflectionUtils.setFieldToNull(this, "count"); // reduce metrics memory footprint
+        try
+        {
+            this.clock = clock;
+            this.startTime = this.clock.now();
+            this.lastTick = this.startTime;
+            this.countMetricId = ThreadLocalMetrics.allocateMetricId();
+            this.uncountedMetricId = ThreadLocalMetrics.allocateMetricId();
+            this.rateGroupId = allocateRateGroupOffset();
+            allMeters.add(new WeakReference<>(this));
+            ThreadLocalMetrics.destroyWhenUnreachable(this, new MeterCleaner(countMetricId, uncountedMetricId, rateGroupId));
+            ReflectionUtils.setFieldToNull(this, "count"); // reduce metrics memory footprint
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     private static class MeterCleaner implements ThreadLocalMetrics.MetricCleaner
@@ -210,99 +223,170 @@ public class ThreadLocalMeter extends com.codahale.metrics.Meter implements Mete
      */
     public void mark(long n)
     {
-        ThreadLocalMetrics context = ThreadLocalMetrics.get();
-        context.addNonStatic(countMetricId, n);
-        context.addNonStatic(uncountedMetricId, n);
+        try
+        {
+            ThreadLocalMetrics context = ThreadLocalMetrics.get();
+            context.addNonStatic(countMetricId, n);
+            context.addNonStatic(uncountedMetricId, n);
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     @Override
     public long getCount()
     {
-        return ThreadLocalMetrics.getCount(countMetricId);
+        try
+        {
+            return ThreadLocalMetrics.getCount(countMetricId);
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     @Override
     public double getFifteenMinuteRate()
     {
-        return getRatePerSecond(getRateValue(rateGroupId + M15_RATE_OFFSET));
+        try
+        {
+            return getRatePerSecond(getRateValue(rateGroupId + M15_RATE_OFFSET));
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     @Override
     public double getFiveMinuteRate()
     {
-        return getRatePerSecond(getRateValue(rateGroupId + M5_RATE_OFFSET));
+        try
+        {
+            return getRatePerSecond(getRateValue(rateGroupId + M5_RATE_OFFSET));
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     @Override
     public double getOneMinuteRate()
     {
-        return getRatePerSecond(getRateValue(rateGroupId + M1_RATE_OFFSET));
+        try
+        {
+            return getRatePerSecond(getRateValue(rateGroupId + M1_RATE_OFFSET));
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     @Override
     public double getMeanRate()
     {
-        long count = getCount();
-        if (count == 0)
-            return 0.0;
-        else
+        try
         {
-            final double elapsed = clock.now() - startTime;
-            return count / elapsed * TimeUnit.SECONDS.toNanos(1);
+            long count = getCount();
+            if (count == 0)
+                return 0.0;
+            else
+            {
+                final double elapsed = clock.now() - startTime;
+                return count / elapsed * TimeUnit.SECONDS.toNanos(1);
+            }
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
         }
     }
 
     @VisibleForTesting
     static void tickAll()
     {
-        synchronized (ratesArrayGuard)
-        {
-            List<WeakReference<ThreadLocalMeter>> emptyRefsToRemove = null;
-            for (WeakReference<ThreadLocalMeter> threadLocalMeterRef : allMeters)
+        try {
+            synchronized (ratesArrayGuard)
             {
-                ThreadLocalMeter meter = threadLocalMeterRef.get();
-                if (meter != null)
-                    meter.tickIfNessesary();
-                else
+                List<WeakReference<ThreadLocalMeter>> emptyRefsToRemove = null;
+                for (WeakReference<ThreadLocalMeter> threadLocalMeterRef : allMeters)
                 {
-                    if (emptyRefsToRemove == null)
-                        emptyRefsToRemove = new ArrayList<>();
-                    emptyRefsToRemove.add(threadLocalMeterRef);
+                    ThreadLocalMeter meter = threadLocalMeterRef.get();
+                    if (meter != null)
+                        meter.tickIfNessesary();
+                    else
+                    {
+                        if (emptyRefsToRemove == null)
+                            emptyRefsToRemove = new ArrayList<>();
+                        emptyRefsToRemove.add(threadLocalMeterRef);
+                    }
+                    if (emptyRefsToRemove != null)
+                        allMeters.removeAll(emptyRefsToRemove);
                 }
-                if (emptyRefsToRemove != null)
-                    allMeters.removeAll(emptyRefsToRemove);
             }
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
         }
     }
 
     private void tickIfNessesary()
     {
-        long newTick = clock.now();
-        long age = newTick - lastTick;
-        if (age > TICK_INTERVAL_NS)
+        try
         {
-            lastTick = newTick - age % TICK_INTERVAL_NS;
-            long requiredTicks = age / TICK_INTERVAL_NS;
-            tick(requiredTicks);
+            long newTick = clock.now();
+            long age = newTick - lastTick;
+            if (age > TICK_INTERVAL_NS)
+            {
+                lastTick = newTick - age % TICK_INTERVAL_NS;
+                long requiredTicks = age / TICK_INTERVAL_NS;
+                tick(requiredTicks);
+            }
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
         }
     }
     private void tick(long requiredTicks)
     {
-        if (requiredTicks >= maxTicks)
-            reset();
-        else if (requiredTicks > 0)
+        try
         {
-            long count = ThreadLocalMetrics.getCountAndReset(uncountedMetricId);
-            for (long i = 0; i < requiredTicks; i++)
+            if (requiredTicks >= maxTicks)
+                reset();
+            else if (requiredTicks > 0)
             {
-                double m1Rate  = getRateValue(rateGroupId +  M1_RATE_OFFSET);
-                double m5Rate  = getRateValue(rateGroupId +  M5_RATE_OFFSET);
-                double m15Rate = getRateValue(rateGroupId + M15_RATE_OFFSET);
-                setRateValue(rateGroupId +  M1_RATE_OFFSET, tickOneMinuteEWMA(m1Rate, count));
-                setRateValue(rateGroupId +  M5_RATE_OFFSET, tickFiveMinuteEWMA(m5Rate, count));
-                setRateValue(rateGroupId + M15_RATE_OFFSET, tickFifteenMinuteEWMA(m15Rate, count));
-                count = 0;
+                long count = ThreadLocalMetrics.getCountAndReset(uncountedMetricId);
+                for (long i = 0; i < requiredTicks; i++)
+                {
+                    double m1Rate  = getRateValue(rateGroupId +  M1_RATE_OFFSET);
+                    double m5Rate  = getRateValue(rateGroupId +  M5_RATE_OFFSET);
+                    double m15Rate = getRateValue(rateGroupId + M15_RATE_OFFSET);
+                    setRateValue(rateGroupId +  M1_RATE_OFFSET, tickOneMinuteEWMA(m1Rate, count));
+                    setRateValue(rateGroupId +  M5_RATE_OFFSET, tickFiveMinuteEWMA(m5Rate, count));
+                    setRateValue(rateGroupId + M15_RATE_OFFSET, tickFifteenMinuteEWMA(m15Rate, count));
+                    count = 0;
+                }
             }
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
         }
     }
 
@@ -341,10 +425,18 @@ public class ThreadLocalMeter extends com.codahale.metrics.Meter implements Mete
      */
     private void reset()
     {
-        ThreadLocalMetrics.getCountAndReset(uncountedMetricId);
-        setRateValue(rateGroupId +  M1_RATE_OFFSET, Double.MIN_NORMAL);
-        setRateValue(rateGroupId +  M5_RATE_OFFSET, Double.MIN_NORMAL);
-        setRateValue(rateGroupId + M15_RATE_OFFSET, Double.MIN_NORMAL);
+        try
+        {
+            ThreadLocalMetrics.getCountAndReset(uncountedMetricId);
+            setRateValue(rateGroupId +  M1_RATE_OFFSET, Double.MIN_NORMAL);
+            setRateValue(rateGroupId +  M5_RATE_OFFSET, Double.MIN_NORMAL);
+            setRateValue(rateGroupId + M15_RATE_OFFSET, Double.MIN_NORMAL);
+        }
+        catch (Throwable e)
+        {
+            logger.error("fail", e);
+            throw e;
+        }
     }
 
     @VisibleForTesting
