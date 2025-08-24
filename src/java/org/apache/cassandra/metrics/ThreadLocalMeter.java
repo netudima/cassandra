@@ -331,9 +331,9 @@ public class ThreadLocalMeter extends com.codahale.metrics.Meter implements Mete
                             emptyRefsToRemove = new ArrayList<>();
                         emptyRefsToRemove.add(threadLocalMeterRef);
                     }
-                    if (emptyRefsToRemove != null)
-                        allMeters.removeAll(emptyRefsToRemove);
                 }
+                if (emptyRefsToRemove != null)
+                    allMeters.removeAll(emptyRefsToRemove);
             }
         }
         catch (Throwable e)

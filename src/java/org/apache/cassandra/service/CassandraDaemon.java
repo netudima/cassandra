@@ -508,6 +508,7 @@ public class CassandraDaemon
 
     public static void disableAutoCompaction(Collection<String> keyspaces)
     {
+        logger.info("disable autocompaction for {}", keyspaces);
         for (String keyspaceName : keyspaces)
         {
             if (logger.isDebugEnabled())

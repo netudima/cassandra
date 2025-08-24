@@ -88,6 +88,7 @@ import static org.apache.cassandra.utils.FBUtilities.getBroadcastAddressAndPort;
 
     public static void initialize(Set<InetAddressAndPort> seeds) throws InterruptedException, ExecutionException, IOException, StartupException
     {
+        logger.info("initialize");
         initialize(seeds,
                    p -> p,
                    () -> MessagingService.instance().waitUntilListeningUnchecked());
