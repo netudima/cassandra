@@ -432,7 +432,7 @@ public class ResultSet
                 if (version.isGreaterOrEqualTo(ProtocolVersion.V5)  && metadataChanged)
                 {
                     assert !noMetadata : "MetadataChanged and NoMetadata are mutually exclusive flags";
-                    CBUtil.writeBytes(m.getResultMetadataId().bytes, dest);
+                    CBUtil.writeBytes(m.getResultMetadataId().bytes(), dest);
                 }
 
                 if (!noMetadata)
@@ -469,7 +469,7 @@ public class ResultSet
                     size += CBUtil.sizeOfValue(m.pagingState.serializedSize(version));
 
                 if (version.isGreaterOrEqualTo(ProtocolVersion.V5) && metadataChanged)
-                    size += CBUtil.sizeOfBytes(m.getResultMetadataId().bytes);
+                    size += CBUtil.sizeOfBytes(m.getResultMetadataId().bytes());
 
                 if (!noMetadata)
                 {

@@ -65,7 +65,7 @@ public class BatchMessage extends Message.Request
                 if (kind == 0)
                     queryOrIds.add(CBUtil.readLongString(body));
                 else if (kind == 1)
-                    queryOrIds.add(MD5Digest.wrap(CBUtil.readBytes(body)));
+                    queryOrIds.add(readDigest(body));
                 else
                     throw new ProtocolException("Invalid query kind in BATCH messages. Must be 0 or 1 but got " + kind);
                 variables.add(CBUtil.readValueList(body, version));
@@ -73,6 +73,12 @@ public class BatchMessage extends Message.Request
             QueryOptions options = QueryOptions.codec.decode(body, version);
 
             return new BatchMessage(toType(type), queryOrIds, variables, options);
+        }
+
+        private MD5Digest readDigest(ByteBuf body) {
+            int digestLength = body.readUnsignedShort();
+            assert digestLength == 16;
+            return MD5Digest.wrap(body.readLong(), body.readLong());
         }
 
         public void encode(BatchMessage msg, ByteBuf dest, ProtocolVersion version)
@@ -89,7 +95,7 @@ public class BatchMessage extends Message.Request
                 if (q instanceof String)
                     CBUtil.writeLongString((String)q, dest);
                 else
-                    CBUtil.writeBytes(((MD5Digest)q).bytes, dest);
+                    CBUtil.writeBytes(((MD5Digest) q).bytes(), dest);
 
                 CBUtil.writeValueList(msg.values.get(i), dest);
             }
@@ -108,7 +114,7 @@ public class BatchMessage extends Message.Request
                 Object q = msg.queryOrIdList.get(i);
                 size += 1 + (q instanceof String
                              ? CBUtil.sizeOfLongString((String)q)
-                             : CBUtil.sizeOfBytes(((MD5Digest)q).bytes));
+                             : CBUtil.sizeOfBytes(((MD5Digest) q).bytes()));
 
                 size += CBUtil.sizeOfValueList(msg.values.get(i));
             }

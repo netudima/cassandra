@@ -260,7 +260,7 @@ public class ErrorMessage extends Message.Response
                     break;
                 case UNPREPARED:
                     PreparedQueryNotFoundException pqnfe = (PreparedQueryNotFoundException)err;
-                    CBUtil.writeBytes(pqnfe.id.bytes, dest);
+                    CBUtil.writeBytes(pqnfe.id.bytes(), dest);
                     break;
                 case ALREADY_EXISTS:
                     AlreadyExistsException aee = (AlreadyExistsException)err;
@@ -330,7 +330,7 @@ public class ErrorMessage extends Message.Response
                     break;
                 case UNPREPARED:
                     PreparedQueryNotFoundException pqnfe = (PreparedQueryNotFoundException)err;
-                    size += CBUtil.sizeOfBytes(pqnfe.id.bytes);
+                    size += CBUtil.sizeOfBytes(pqnfe.id.bytes());
                     break;
                 case ALREADY_EXISTS:
                     AlreadyExistsException aee = (AlreadyExistsException)err;

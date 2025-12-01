@@ -54,21 +54,27 @@ public class ExecuteMessage extends Message.Request
     {
         public ExecuteMessage decode(ByteBuf body, ProtocolVersion version)
         {
-            MD5Digest statementId = MD5Digest.wrap(CBUtil.readBytes(body));
+            MD5Digest statementId = readDigest(body);
 
             MD5Digest resultMetadataId = null;
             if (version.isGreaterOrEqualTo(ProtocolVersion.V5))
-                resultMetadataId = MD5Digest.wrap(CBUtil.readBytes(body));
+                resultMetadataId = readDigest(body);
 
             return new ExecuteMessage(statementId, resultMetadataId, QueryOptions.codec.decode(body, version));
         }
 
+        private MD5Digest readDigest(ByteBuf body) {
+            int digestLength = body.readUnsignedShort();
+            assert digestLength == 16;
+            return MD5Digest.wrap(body.readLong(), body.readLong());
+        }
+
         public void encode(ExecuteMessage msg, ByteBuf dest, ProtocolVersion version)
         {
-            CBUtil.writeBytes(msg.statementId.bytes, dest);
+            CBUtil.writeBytes(msg.statementId.bytes(), dest);
 
             if (version.isGreaterOrEqualTo(ProtocolVersion.V5))
-                CBUtil.writeBytes(msg.resultMetadataId.bytes, dest);
+                CBUtil.writeBytes(msg.resultMetadataId.bytes(), dest);
 
             if (version == ProtocolVersion.V1)
             {
@@ -84,10 +90,10 @@ public class ExecuteMessage extends Message.Request
         public int encodedSize(ExecuteMessage msg, ProtocolVersion version)
         {
             int size = 0;
-            size += CBUtil.sizeOfBytes(msg.statementId.bytes);
+            size += CBUtil.sizeOfBytes(msg.statementId.bytes());
 
             if (version.isGreaterOrEqualTo(ProtocolVersion.V5))
-                size += CBUtil.sizeOfBytes(msg.resultMetadataId.bytes);
+                size += CBUtil.sizeOfBytes(msg.resultMetadataId.bytes());
 
             if (version == ProtocolVersion.V1)
             {

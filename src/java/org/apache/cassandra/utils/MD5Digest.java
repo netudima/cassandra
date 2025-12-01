@@ -20,7 +20,6 @@ package org.apache.cassandra.utils;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Arrays;
 
 /**
  * The result of the computation of an MD5 digest.
@@ -58,23 +57,33 @@ public class MD5Digest
         }
     };
 
-    public final byte[] bytes;
-    private final int hashCode;
-
-    private MD5Digest(byte[] bytes)
+    final long hash0;
+    final long hash1;
+    private MD5Digest(long hash0, long hash1)
     {
-        this.bytes = bytes;
-        hashCode = Arrays.hashCode(bytes);
+        this.hash0 = hash0;
+        this.hash1 = hash1;
+    }
+
+    public static MD5Digest wrap(long hash0, long hash1)
+    {
+        return new MD5Digest(hash0, hash1);
     }
 
     public static MD5Digest wrap(byte[] digest)
     {
-        return new MD5Digest(digest);
+        if (digest == null || digest.length == 0) {
+            return new MD5Digest(0, 0);
+        }
+        assert digest.length == 16;
+        long hash0 = ByteArrayUtil.getLong(digest, 0);
+        long hash1 = ByteArrayUtil.getLong(digest, 8);
+        return new MD5Digest(hash0, hash1);
     }
 
     public static MD5Digest compute(byte[] toHash)
     {
-        return new MD5Digest(localMD5Digest.get().digest(toHash));
+        return wrap(localMD5Digest.get().digest(toHash));
     }
 
     public static MD5Digest compute(String toHash)
@@ -84,13 +93,22 @@ public class MD5Digest
 
     public ByteBuffer byteBuffer()
     {
-        return ByteBuffer.wrap(bytes);
+        return ByteBuffer.wrap(bytes());
+    }
+
+
+    public byte[] bytes()
+    {
+        byte[] result = new byte[16];
+        ByteArrayUtil.putLong(result, 0, hash0);
+        ByteArrayUtil.putLong(result, 8, hash1);
+        return result;
     }
 
     @Override
     public final int hashCode()
     {
-        return hashCode;
+        return Long.hashCode(hash0) ^ Long.hashCode(hash1);
     }
 
     @Override
@@ -99,14 +117,13 @@ public class MD5Digest
         if(!(o instanceof MD5Digest))
             return false;
         MD5Digest that = (MD5Digest)o;
-        // handles nulls properly
-        return FBUtilities.compareUnsigned(this.bytes, that.bytes, 0, 0, this.bytes.length, that.bytes.length) == 0;
+        return this.hash0 == that.hash0 && this.hash1 == that.hash1;
     }
 
     @Override
     public String toString()
     {
-        return Hex.bytesToHex(bytes);
+        return Hex.bytesToHex(bytes());
     }
 
     public static MessageDigest threadLocalMD5Digest()
@@ -116,7 +133,7 @@ public class MD5Digest
 
     public int size()
     {
-        return bytes.length + //bytes
+        return 8 + 8 + //hash0, hash1
                 4; // int hashCode
     }
 }
