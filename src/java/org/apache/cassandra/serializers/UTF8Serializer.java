@@ -197,7 +197,7 @@ public class UTF8Serializer extends AbstractTextSerializer
                     for (int i = start; i < end; i++)
                     {
                         if (valueAsArray[i] < 0)
-                            return validateSlowPath(value, accessor, i);
+                            return validateSlowPath(value, accessor, i - start);
                     }
                 }
                 return true;
