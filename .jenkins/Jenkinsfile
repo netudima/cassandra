@@ -434,13 +434,10 @@ def test(command, cell) {
             if (!cell.step.startsWith("microbench")) {
               junit testResults: "test/**/TEST-*.xml,test/**/cqlshlib*.xml,test/**/nosetests*.xml", testDataPublishers: [[$class: 'StabilityTestDataPublisher']]
             }
-            // check if we had Linux OOM killer active
+            // check if we had Linux OOM killer active which could kill forked JUnit processes
              sh """
-                dmesg | grep -i "killed process" || true
-                cat /sys/fs/cgroup/memory.events || true
-                cat /sys/fs/cgroup/memory.peak || true
-                cat /sys/fs/cgroup/memory.max || true
-                cat cat /sys/fs/cgroup/*/memory.events || true
+                cat /sys/fs/cgroup/docker/memory.events || true
+                sudo dmesg | grep -i "killed process" || true
               """
             sh """
                 find test/output -type f -name "*.xml" -print0 | xargs -0 -r -n1 -P"\$(nproc)" xz -f
