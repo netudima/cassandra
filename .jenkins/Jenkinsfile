@@ -436,7 +436,9 @@ def test(command, cell) {
             }
             // check if we had Linux OOM killer active
              sh """
-                dmesg -T | egrep -i 'killed process'
+                cat /sys/fs/cgroup/memory.events
+                cat /sys/fs/cgroup/memory.peak
+                cat /sys/fs/cgroup/memory.max
               """
             sh """
                 find test/output -type f -name "*.xml" -print0 | xargs -0 -r -n1 -P"\$(nproc)" xz -f
