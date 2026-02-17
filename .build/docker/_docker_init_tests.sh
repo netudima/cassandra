@@ -44,5 +44,8 @@ fi
 # these happen when the image hasn't pre-downloaded all the ccm versions used in tests
 rm -rf /tmp/ccm-*.tar.gz
 
+# check for possible Linux OOM killer messages
+sudo dmesg | grep -i "killed process" || true
+
 set -x
 exit ${status}
