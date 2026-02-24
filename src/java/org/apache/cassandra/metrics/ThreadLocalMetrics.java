@@ -81,13 +81,13 @@ public class ThreadLocalMetrics
 
     private static final FastThreadLocal<ThreadLocalMetrics> threadLocalMetricsCurrent = new FastThreadLocal<>()
     {
-        private  MetricCleanerReference metricCleanerReference;
+        private MetricCleanerReference metricCleanerRef;
         @Override
         protected ThreadLocalMetrics initialValue()
         {
             ThreadLocalMetrics result = new ThreadLocalMetrics();
             allThreadLocalMetrics.add(result);
-            metricCleanerReference = destroyWhenUnreachable(Thread.currentThread(), result::release);
+            metricCleanerRef = destroyWhenUnreachable(Thread.currentThread(), result::release);
             return result;
         }
 
@@ -97,8 +97,11 @@ public class ThreadLocalMetrics
         protected void onRemoval(ThreadLocalMetrics value)
         {
             value.release();
-            if (metricCleanerReference != null)
-                phantomReferences.remove(metricCleanerReference);
+            if (metricCleanerRef != null)
+            {
+                phantomReferences.remove(metricCleanerRef);
+                metricCleanerRef.metricCleaner = null; // to be able to do GC for ThreadLocalMetrics faster
+            }
         }
     };
 
@@ -150,7 +153,7 @@ public class ThreadLocalMetrics
 
     private static class MetricCleanerReference extends PhantomReference<Object>
     {
-        private final MetricCleaner metricCleaner;
+        private volatile MetricCleaner metricCleaner;
 
         public MetricCleanerReference(Object referent, ReferenceQueue<? super Object> q, MetricCleaner metricCleaner)
         {
@@ -160,7 +163,9 @@ public class ThreadLocalMetrics
 
         public void release()
         {
-            metricCleaner.clean();
+            MetricCleaner cleaner = metricCleaner;
+            if (cleaner != null)
+                cleaner.clean();
         }
     }
 
