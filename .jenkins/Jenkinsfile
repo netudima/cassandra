@@ -447,7 +447,7 @@ def test(command, cell) {
                 echo "test result files compressed"; find test/output -type f -name "*.xml.xz" | wc -l
               """
             archiveArtifacts artifacts: "test/logs/**,test/**/TEST-*.xml.xz,test/**/cqlshlib*.xml.xz,test/**/nosetests*.xml.xz,test/jmh-result.json", fingerprint: true
-            archiveArtifacts artifacts: "test/*.hprof.xz"
+            archiveArtifacts artifacts: "test/*.hprof.xz", allowEmptyArchive: true
             copyToNightlies("${logfile}, test/logs/**", "${cell.step}/${cell.arch}/jdk${cell.jdk}/python${cell.python}/cython_${cell.cython}/" + "split_${cell.split}_${splits}".replace("/", "_"))
           }
           cleanAgent(cell.step)
