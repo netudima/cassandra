@@ -19,6 +19,7 @@ package org.apache.cassandra.service.accord;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -57,6 +58,8 @@ public class AccordCommandStores extends CommandStores implements CacheSize, Shu
     private int maxQueuedLoads, maxQueuedRangeLoads;
     private boolean shrinkingOn;
 
+    private final ScheduledFuture<?> cacheProcessingFuture;
+
     AccordCommandStores(NodeCommandStoreService node, Agent agent, DataStore store, RandomSource random,
                         ShardDistributor shardDistributor, ProgressLog.Factory progressLogFactory, LocalListeners.Factory listenerFactory,
                         Journal journal, AccordExecutor[] executors)
@@ -71,7 +74,7 @@ public class AccordCommandStores extends CommandStores implements CacheSize, Shu
         maxQueuedRangeLoads = DatabaseDescriptor.getAccordMaxQueuedRangeLoadCount();
         shrinkingOn = DatabaseDescriptor.getAccordCacheShrinkingOn();
         refreshCapacities();
-        ScheduledExecutors.scheduledFastTasks.scheduleWithFixedDelay(() -> {
+        cacheProcessingFuture = ScheduledExecutors.scheduledFastTasks.scheduleWithFixedDelay(() -> {
             for (AccordExecutor executor : executors)
             {
                 executor.executeDirectlyWithLock(() -> {
@@ -220,6 +223,7 @@ public class AccordCommandStores extends CommandStores implements CacheSize, Shu
     public synchronized void shutdown()
     {
         super.shutdown();
+        cacheProcessingFuture.cancel(false);
         for (AccordExecutor executor : executors)
             executor.shutdown();
     }
