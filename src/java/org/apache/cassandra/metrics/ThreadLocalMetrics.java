@@ -97,10 +97,12 @@ public class ThreadLocalMetrics
         protected void onRemoval(ThreadLocalMetrics value)
         {
             value.release();
+            // to be able to do GC for ThreadLocalMetrics faster
             if (metricCleanerRef != null)
             {
                 phantomReferences.remove(metricCleanerRef);
-                metricCleanerRef.metricCleaner = null; // to be able to do GC for ThreadLocalMetrics faster
+                metricCleanerRef.metricCleaner = null;
+                metricCleanerRef.clear();
             }
         }
     };
