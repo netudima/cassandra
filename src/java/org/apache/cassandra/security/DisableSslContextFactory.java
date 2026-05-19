@@ -18,30 +18,17 @@
 
 package org.apache.cassandra.security;
 
-import javax.net.ssl.KeyManagerFactory;
+import java.util.Collections;
+import java.util.List;
+
+import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.TrustManagerFactory;
 
-public class DisableSslContextFactory extends AbstractSslContextFactory
+import io.netty.handler.ssl.CipherSuiteFilter;
+import io.netty.handler.ssl.SslContext;
+
+public class DisableSslContextFactory implements ISslContextFactory
 {
-    @Override
-    protected KeyManagerFactory buildKeyManagerFactory() throws SSLException
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected TrustManagerFactory buildTrustManagerFactory() throws SSLException
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected KeyManagerFactory buildOutboundKeyManagerFactory() throws SSLException
-    {
-        throw new UnsupportedOperationException();
-    }
-
     @Override
     public boolean hasKeystore()
     {
@@ -52,6 +39,30 @@ public class DisableSslContextFactory extends AbstractSslContextFactory
     public boolean hasOutboundKeystore()
     {
         return false;
+    }
+
+    @Override
+    public List<String> getAcceptedProtocols()
+    {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public List<String> getCipherSuites()
+    {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public SSLContext createJSSESslContext(boolean verifyPeerCertificate)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SslContext createNettySslContext(boolean verifyPeerCertificate, SocketType socketType, CipherSuiteFilter cipherFilter) throws SSLException
+    {
+        throw new UnsupportedOperationException();
     }
 
     @Override

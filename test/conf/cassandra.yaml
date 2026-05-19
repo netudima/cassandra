@@ -80,6 +80,10 @@ accord:
     command_store_shard_count: 4
     shutdown_grace_period: 120s
 
+# to speedup tests, usually we do not need snapshots,
+# and we drop keyspaces frequently, for example: after every CQLTester test
+auto_snapshot: false
+
 memtable:
     configurations:
         skiplist:

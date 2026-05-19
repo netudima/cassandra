@@ -1448,6 +1448,9 @@
         <jvmarg value="-Dcassandra.ring_delay_ms=1000"/>
         <jvmarg value="-Dcassandra.tolerate_sstable_size=true"/>
         <jvmarg value="-Dcassandra.skip_sync=true" />
+        <jvmarg value="-Dcom.datastax.driver.USE_NATIVE_CLOCK=false" /> <!-- to avoid a native library loading and save time -->
+        <jvmarg value="-Dcassandra.unsafesystem=true" />
+        <jvmarg value="-Dcassandra.test.disable_ssl=true" />
       </testmacrohelper>
     </sequential>
   </macrodef>
