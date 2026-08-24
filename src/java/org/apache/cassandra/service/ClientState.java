@@ -42,6 +42,7 @@ import org.apache.cassandra.auth.FunctionResource;
 import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.auth.Resources;
+import org.apache.cassandra.auth.Roles;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryHandler;
 import org.apache.cassandra.cql3.QueryProcessor;
@@ -63,6 +64,7 @@ import org.apache.cassandra.tracing.TraceKeyspace;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MD5Digest;
+import org.apache.cassandra.utils.MonotonicClock;
 
 import static org.apache.cassandra.config.CassandraRelevantProperties.CUSTOM_QUERY_HANDLER_CLASS;
 import static org.apache.cassandra.utils.Clock.Global.currentTimeMillis;
@@ -111,6 +113,8 @@ public class ClientState
 
     // Current user for the session
     private volatile AuthenticatedUser user;
+    // Memoized outcome of the last superuser status check
+    private volatile SuperuserStatus superuserStatus;
     private volatile String keyspace;
     private volatile boolean issuedPreparedStatementsUseWarning;
     private volatile boolean issuedWarningForUneligiblePreparedStatements;
@@ -208,6 +212,7 @@ public class ClientState
         this.isInternal = source.isInternal;
         this.remoteAddress = source.remoteAddress;
         this.user = source.user;
+        this.superuserStatus = source.superuserStatus;
         this.keyspace = source.keyspace;
         this.driverName = source.driverName;
         this.driverVersion = source.driverVersion;
@@ -404,7 +409,10 @@ public class ClientState
     public void login(AuthenticatedUser user)
     {
         if (user.isAnonymous() || canLogin(user))
+        {
             this.user = user;
+            this.superuserStatus = null;
+        }
         else
             throw new AuthenticationException(String.format("%s is not permitted to log in", user.getName()));
     }
@@ -628,7 +636,56 @@ public class ClientState
      */
     public boolean isSuper()
     {
-        return !DatabaseDescriptor.isAuthenticationRequired() || (user != null && user.isSuper());
+        if (!DatabaseDescriptor.isAuthenticationRequired())
+            return true;
+
+        AuthenticatedUser user = this.user;
+        if (user == null)
+            return false;
+
+        int validityMillis = DatabaseDescriptor.getRolesValidity();
+        // cache is disabled (validityMillis == 0)
+        // or validityMillis is too small to cache here: validityMillis / VALIDITY_DEADLINE_DIVIDER < 1
+        if (validityMillis < SuperuserStatus.VALIDITY_DEADLINE_DIVIDER)
+            return user.isSuper();
+
+        // user.isSuper is expensive (even if we do a cache lookup) to use very frequently,
+        // so we want to avoid it if possible by caching the result on ClientState level
+        long generation = Roles.cacheGeneration();
+        long nowNanos = MonotonicClock.Global.approxTime.now();
+
+        SuperuserStatus current = superuserStatus;
+        if (current != null && current.isValid(user, generation, nowNanos))
+            return current.isSuper;
+
+        boolean isSuper = user.isSuper();
+        superuserStatus = new SuperuserStatus(user, isSuper, generation, nowNanos, validityMillis);
+        return isSuper;
+    }
+
+    private static class SuperuserStatus
+    {
+        // up to (100 / 10) = 10 % of extra time on top of Roles validity time
+        static final int VALIDITY_DEADLINE_DIVIDER = 10;
+        private final AuthenticatedUser user;
+        private final boolean isSuper;
+        private final long rolesCacheGeneration;
+        private final long statusValidityDeadlineNano;
+
+        private SuperuserStatus(AuthenticatedUser user, boolean isSuper, long rolesCacheGeneration, long computedAtNanos, int validityMillis)
+        {
+            this.user = user;
+            this.isSuper = isSuper;
+            this.rolesCacheGeneration = rolesCacheGeneration;
+            this.statusValidityDeadlineNano = computedAtNanos + TimeUnit.MILLISECONDS.toNanos(validityMillis / VALIDITY_DEADLINE_DIVIDER);
+        }
+
+        private boolean isValid(AuthenticatedUser user, long rolesCacheGeneration, long nowNanos)
+        {
+            return this.user.equals(user)
+                   && this.rolesCacheGeneration == rolesCacheGeneration
+                   && nowNanos < statusValidityDeadlineNano;
+        }
     }
 
     /**

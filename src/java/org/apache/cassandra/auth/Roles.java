@@ -97,6 +97,15 @@ public class Roles
     }
 
     /**
+     * Identifies the current generation of the roles cache contents.
+     * It is used to check if an explicit invalidation or validity time reconfiguration happen for the cache.
+     */
+    public static long cacheGeneration()
+    {
+        return cache.getGeneration();
+    }
+
+    /**
      * Returns true if the supplied role or any other role granted to it
      * (directly or indirectly) has superuser status.
      *
