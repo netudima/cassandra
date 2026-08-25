@@ -28,7 +28,7 @@ public class RolesCache extends AuthCache<RoleResource, Set<Role>> implements Ro
 {
     private final IRoleManager roleManager;
 
-    // to track if the cache entries are invalidated or a validity period is changed
+    // to track if the cache entries are invalidated or the validity or refresh period is changed
     private final AtomicLong generation = new AtomicLong();
 
     public RolesCache(IRoleManager roleManager, BooleanSupplier enableCache)
@@ -110,6 +110,13 @@ public class RolesCache extends AuthCache<RoleResource, Set<Role>> implements Ro
     public void setValidity(int validityPeriod)
     {
         super.setValidity(validityPeriod);
+        generation.incrementAndGet();
+    }
+
+    @Override
+    public void setUpdateInterval(int updateInterval)
+    {
+        super.setUpdateInterval(updateInterval);
         generation.incrementAndGet();
     }
 }

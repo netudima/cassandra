@@ -98,7 +98,8 @@ public class Roles
 
     /**
      * Identifies the current generation of the roles cache contents.
-     * It is used to check if an explicit invalidation or validity time reconfiguration happen for the cache.
+     * It is used to check if an explicit invalidation or a validity or refresh interval reconfiguration
+     * happen for the cache.
      */
     public static long cacheGeneration()
     {

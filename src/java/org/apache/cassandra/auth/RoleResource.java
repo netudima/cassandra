@@ -77,7 +77,6 @@ public class RoleResource implements IResource, Comparable<RoleResource>
     {
         this.level = level;
         this.name = name;
-
         this.hash = Objects.hashCode(level, name);
     }
 

@@ -149,7 +149,7 @@ public class ClientStateTest
             assertEquals(1, user.superuserChecks);
 
             user.isSuper = true;
-            Uninterruptibles.sleepUninterruptibly(50, TimeUnit.MILLISECONDS);
+            Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
 
             assertTrue(state.isSuper());
             assertEquals(2, user.superuserChecks);
@@ -217,6 +217,152 @@ public class ClientStateTest
         });
     }
 
+    @Test
+    public void loginDiscardsTheMemoizedSuperuserStatus()
+    {
+        withAuthenticationRequired(() -> {
+            DatabaseDescriptor.setRolesValidity(60_000);
+
+            CountingUser superuser = new CountingUser(true);
+            ClientState state = ClientState.forInternalCalls();
+            state.login(superuser);
+
+            assertTrue(state.isSuper());
+            assertEquals(1, superuser.superuserChecks);
+
+            CountingUser ordinary = new CountingUser(false);
+            state.login(ordinary);
+
+            assertFalse(state.isSuper());
+            assertEquals(1, ordinary.superuserChecks);
+        });
+    }
+
+    @Test
+    public void memoizedSuperuserStatusExpiresWithRolesUpdateInterval()
+    {
+        withAuthenticationRequired(() -> {
+            DatabaseDescriptor.setRolesValidity(60_000);
+            DatabaseDescriptor.setRolesUpdateInterval(200);
+
+            CountingUser user = new CountingUser(false);
+            ClientState state = ClientState.forInternalCalls();
+            state.login(user);
+
+            assertFalse(state.isSuper());
+            assertEquals(1, user.superuserChecks);
+
+            user.isSuper = true;
+            Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+
+            assertTrue(state.isSuper());
+            assertEquals(2, user.superuserChecks);
+        });
+    }
+
+    @Test
+    public void memoizedSuperuserStatusIsDiscardedWhenRolesUpdateIntervalIsReconfigured()
+    {
+        withAuthenticationRequired(() -> {
+            DatabaseDescriptor.setRolesValidity(60_000);
+
+            CountingUser user = new CountingUser(false);
+            ClientState state = ClientState.forInternalCalls();
+            state.login(user);
+
+            assertFalse(state.isSuper());
+            user.isSuper = true;
+            assertFalse(state.isSuper());
+            assertEquals(1, user.superuserChecks);
+
+            Roles.cache.setUpdateInterval(30_000);
+
+            assertTrue(state.isSuper());
+            assertEquals(2, user.superuserChecks);
+        });
+    }
+
+    @Test
+    public void memoizedSuperuserStatusIsDiscardedWhenValidityIsReduced()
+    {
+        withAuthenticationRequired(() -> {
+            DatabaseDescriptor.setRolesValidity(60_000);
+            DatabaseDescriptor.setRolesUpdateInterval(60_000);
+
+            CountingUser user = new CountingUser(false);
+            ClientState state = ClientState.forInternalCalls();
+            state.login(user);
+
+            long generationBefore = Roles.cacheGeneration();
+
+            assertFalse(state.isSuper());
+            user.isSuper = true;
+            assertFalse(state.isSuper());
+            assertEquals(1, user.superuserChecks);
+
+            DatabaseDescriptor.setRolesValidity(30_000);
+            assertEquals("expect same generation", generationBefore, Roles.cacheGeneration());
+
+            assertTrue("super user state changed", state.isSuper());
+            assertEquals(2, user.superuserChecks);
+        });
+    }
+
+    @Test
+    public void memoizedSuperuserStatusIsDiscardedWhenAnotherAuthCacheReducesRolesValidity()
+    {
+        // Role validity is a shared knob between different caches (Roles, Network, CIDR)
+        // if you run nodetool setauthcacheconfig for the network cache it will impact roles config as well
+
+        withAuthenticationRequired(() -> {
+            DatabaseDescriptor.setRolesValidity(60_000);
+            DatabaseDescriptor.setRolesUpdateInterval(60_000);
+
+            CountingUser user = new CountingUser(false);
+            ClientState state = ClientState.forInternalCalls();
+            state.login(user);
+
+            long generationBefore = Roles.cacheGeneration();
+
+            assertFalse(state.isSuper());
+            user.isSuper = true;
+            assertFalse(state.isSuper());
+            assertEquals(1, user.superuserChecks);
+
+            AuthenticatedUser.networkPermissionsCache.setValidity(30_000);
+            assertEquals("a sibling cache rewrote roles_validity", 30_000, DatabaseDescriptor.getRolesValidity());
+            assertEquals("expect same generation", generationBefore, Roles.cacheGeneration());
+
+            assertTrue("super user state changed", state.isSuper());
+            assertEquals(2, user.superuserChecks);
+        });
+    }
+
+    @Test
+    public void memoizedSuperuserStatusDoesntChangeWhenValidityIsExtended()
+    {
+        withAuthenticationRequired(() -> {
+            DatabaseDescriptor.setRolesValidity(60_000);
+            DatabaseDescriptor.setRolesUpdateInterval(60_000);
+
+            CountingUser user = new CountingUser(false);
+            ClientState state = ClientState.forInternalCalls();
+            state.login(user);
+
+            assertFalse(state.isSuper());
+            user.isSuper = true;
+            assertEquals(1, user.superuserChecks);
+
+            long generationBefore = Roles.cacheGeneration();
+            DatabaseDescriptor.setRolesValidity(600_000);
+            DatabaseDescriptor.setRolesUpdateInterval(600_000);
+            assertEquals("the roles cache generation must not have moved", generationBefore, Roles.cacheGeneration());
+
+            assertFalse("still memoized since the validity of the cache increased", state.isSuper());
+            assertEquals(1, user.superuserChecks);
+        });
+    }
+
     private static void withAuthenticationRequired(Runnable test)
     {
         IAuthenticator previousAuthenticator = DatabaseDescriptor.getAuthenticator();
@@ -237,6 +383,7 @@ public class ClientStateTest
         {
             DatabaseDescriptor.setAuthenticator(previousAuthenticator);
             DatabaseDescriptor.setRolesValidity(previousRolesValidity);
+            DatabaseDescriptor.setRolesUpdateInterval(-1);
             Roles.cache.invalidate();
         }
     }

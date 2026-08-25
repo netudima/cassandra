@@ -628,7 +628,7 @@ public class ClientState
      */
     public boolean isOrdinaryUser()
     {
-        return !isSuper() && !isSystem();
+        return !isSystem() && !isSuper();
     }
 
     /**
@@ -643,10 +643,10 @@ public class ClientState
         if (user == null)
             return false;
 
-        int validityMillis = DatabaseDescriptor.getRolesValidity();
-        // cache is disabled (validityMillis == 0)
-        // or validityMillis is too small to cache here: validityMillis / VALIDITY_DEADLINE_DIVIDER < 1
-        if (validityMillis < SuperuserStatus.VALIDITY_DEADLINE_DIVIDER)
+        int refreshMillis = Math.min(DatabaseDescriptor.getRolesValidity(), DatabaseDescriptor.getRolesUpdateInterval());
+        // cache is disabled (refreshMillis == 0)
+        // or refreshMillis is too small to cache here: refreshMillis / VALIDITY_DEADLINE_DIVIDER < 1
+        if (refreshMillis < SuperuserStatus.VALIDITY_DEADLINE_DIVIDER)
             return user.isSuper();
 
         // user.isSuper is expensive (even if we do a cache lookup) to use very frequently,
@@ -655,35 +655,40 @@ public class ClientState
         long nowNanos = MonotonicClock.Global.approxTime.now();
 
         SuperuserStatus current = superuserStatus;
-        if (current != null && current.isValid(user, generation, nowNanos))
+        if (current != null && current.isValid(user, generation, nowNanos, refreshMillis))
             return current.isSuper;
 
         boolean isSuper = user.isSuper();
-        superuserStatus = new SuperuserStatus(user, isSuper, generation, nowNanos, validityMillis);
+        // we accept the race here
+        superuserStatus = new SuperuserStatus(user, isSuper, generation, nowNanos, refreshMillis);
         return isSuper;
     }
 
     private static class SuperuserStatus
     {
-        // up to (100 / 10) = 10 % of extra time on top of Roles validity time
+        // up to (100 / 10) = 10 % of extra time on top of the roles cache refresh window
         static final int VALIDITY_DEADLINE_DIVIDER = 10;
         private final AuthenticatedUser user;
         private final boolean isSuper;
         private final long rolesCacheGeneration;
+        private final int refreshMillis;
         private final long statusValidityDeadlineNano;
 
-        private SuperuserStatus(AuthenticatedUser user, boolean isSuper, long rolesCacheGeneration, long computedAtNanos, int validityMillis)
+        private SuperuserStatus(AuthenticatedUser user, boolean isSuper, long rolesCacheGeneration, long computedAtNanos, int refreshMillis)
         {
             this.user = user;
             this.isSuper = isSuper;
             this.rolesCacheGeneration = rolesCacheGeneration;
-            this.statusValidityDeadlineNano = computedAtNanos + TimeUnit.MILLISECONDS.toNanos(validityMillis / VALIDITY_DEADLINE_DIVIDER);
+            this.refreshMillis = refreshMillis;
+            this.statusValidityDeadlineNano = computedAtNanos + TimeUnit.MILLISECONDS.toNanos(refreshMillis / VALIDITY_DEADLINE_DIVIDER);
         }
 
-        private boolean isValid(AuthenticatedUser user, long rolesCacheGeneration, long nowNanos)
+        private boolean isValid(AuthenticatedUser user, long rolesCacheGeneration, long nowNanos, int refreshMillis)
         {
             return this.user.equals(user)
                    && this.rolesCacheGeneration == rolesCacheGeneration
+                   // invalidate when the refresh millis decreased
+                   && this.refreshMillis <= refreshMillis
                    && nowNanos < statusValidityDeadlineNano;
         }
     }
