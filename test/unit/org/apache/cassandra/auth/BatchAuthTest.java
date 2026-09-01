@@ -38,6 +38,7 @@ import org.apache.cassandra.exceptions.UnauthorizedException;
 import org.apache.cassandra.service.ClientState;
 
 import static org.apache.cassandra.auth.AuthTestUtils.auth;
+import static org.junit.Assert.assertEquals;
 
 public class BatchAuthTest extends CQLTester
 {
@@ -191,6 +192,34 @@ public class BatchAuthTest extends CQLTester
 
         grant(clientState, Permission.MODIFY, view2);
         batch.authorize(clientState);
+    }
+
+    @Test
+    public void consecutiveStatementsOnSameTableAreAuthorizedOnce()
+    {
+        ClientState clientState = createUserAndLogin();
+        grant(clientState, Permission.MODIFY, table1);
+        grant(clientState, Permission.MODIFY, table2);
+
+        long one = permissionChecks(clientState, batch(clientState, insert(table1, 0)));
+        long sameTable = permissionChecks(clientState, batch(clientState,
+                                                             insert(table1, 0),
+                                                             insert(table1, 1),
+                                                             insert(table1, 2)));
+        long twoTables = permissionChecks(clientState, batch(clientState,
+                                                             insert(table1, 0),
+                                                             insert(table1, 1),
+                                                             insert(table2, 0)));
+
+        assertEquals("consecutive statements on one table must share a single set of checks", one, sameTable);
+        assertEquals("each distinct table must be authorized in its own right", 2 * one, twoTables);
+    }
+
+    private long permissionChecks(ClientState clientState, BatchStatement batch)
+    {
+        long before = AuthenticatedUser.permissionsCache.getMetrics().requests.getCount();
+        batch.authorize(clientState);
+        return AuthenticatedUser.permissionsCache.getMetrics().requests.getCount() - before;
     }
 
     private BatchStatement batch(ClientState clientState, String... queries)
