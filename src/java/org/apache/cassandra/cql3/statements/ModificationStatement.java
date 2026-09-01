@@ -387,14 +387,16 @@ public abstract class ModificationStatement implements CQLStatement.SingleKeyspa
     void authorize(ClientState state, TableAuthorizationState tableAuthorizationState) throws InvalidRequestException, UnauthorizedException
     {
         boolean tableChanged = tableAuthorizationState == null || !metadata.id.equals(tableAuthorizationState.tableId);
-        if (tableChanged && tableAuthorizationState != null)
-        {
-            tableAuthorizationState.tableId = metadata.id;
-            tableAuthorizationState.selectAuthorized = false;
-        }
-
         if (tableChanged)
+        {
             state.ensureTablePermission(metadata, Permission.MODIFY);
+
+            if (tableAuthorizationState != null)
+            {
+                tableAuthorizationState.tableId = metadata.id;
+                tableAuthorizationState.selectAuthorized = false;
+            }
+        }
 
         // CAS updates can be used to simulate a SELECT query, so should require Permission.SELECT as well.
         if (hasConditions())
