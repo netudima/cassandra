@@ -484,9 +484,10 @@ public abstract class AbstractCommitLogSegmentManager
             throw new UncheckedInterruptedException(e);
         }
 
-        for (CommitLogSegment segment : activeSegments)
+        // Remove before discard, as archiveAndDiscard does, so a segment is never deleted twice
+        CommitLogSegment segment;
+        while ((segment = activeSegments.poll()) != null)
             closeAndDeleteSegmentUnsafe(segment, deleteSegments);
-        activeSegments.clear();
 
         size.set(0L);
 
