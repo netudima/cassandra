@@ -96,7 +96,6 @@ import org.apache.cassandra.config.Config.PaxosStatePurging;
 import org.apache.cassandra.config.Converters;
 import org.apache.cassandra.config.DataStorageSpec;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.cql3.QueryHandler;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
@@ -224,7 +223,6 @@ import org.apache.cassandra.utils.ExecutorUtils;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.MBeanWrapper;
-import org.apache.cassandra.utils.MD5Digest;
 import org.apache.cassandra.utils.OutputHandler;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.Throwables;
@@ -2823,14 +2821,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
         logger.info("Completed {} with status {}", OperationType.UPGRADE_SSTABLES, status);
         return status.statusCode;
-    }
-
-    public List<Pair<String, String>> getPreparedStatements()
-    {
-        List<Pair<String, String>> statements = new ArrayList<>();
-        for (Entry<MD5Digest, QueryHandler.Prepared> e : QueryProcessor.instance.getPreparedStatements().entrySet())
-            statements.add(Pair.create(e.getKey().toString(), e.getValue().rawCQLStatement));
-        return statements;
     }
 
     @Override

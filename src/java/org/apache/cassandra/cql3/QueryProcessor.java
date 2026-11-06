@@ -20,7 +20,6 @@ package org.apache.cassandra.cql3;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -270,11 +269,6 @@ public class QueryProcessor implements QueryHandler
     {
         preparedStatements.invalidate(id);
         SystemKeyspace.removePreparedStatement(id);
-    }
-
-    public HashMap<MD5Digest, Prepared> getPreparedStatements()
-    {
-        return new HashMap<>(preparedStatements.asMap());
     }
 
     public Prepared getPrepared(MD5Digest id)
