@@ -31,6 +31,7 @@ import org.apache.cassandra.distributed.Constants;
 import org.apache.cassandra.distributed.api.Feature;
 import org.apache.cassandra.distributed.api.IInvokableInstance;
 import org.apache.cassandra.distributed.api.IUpgradeableInstance;
+import org.apache.cassandra.transport.messages.ResultMessage;
 
 public class ClusterMetadataUpgradePreparedStatementsTest extends UpgradeTestBase
 {
@@ -53,16 +54,18 @@ public class ClusterMetadataUpgradePreparedStatementsTest extends UpgradeTestBas
             try (com.datastax.driver.core.Cluster c = builder.build();
                  Session session = c.connect())
             {
-                PreparedStatement ps = session.prepare(withKeyspace("insert into %s.tbl (pk, ck, v) values (?, ?, ?)"));
-                PreparedStatement ps2 = session.prepare(withKeyspace("select pk, ck, v from %s.tbl where pk = ?"));
+                String insertQuery = withKeyspace("insert into %s.tbl (pk, ck, v) values (?, ?, ?)");
+                String selectQuery = withKeyspace("select pk, ck, v from %s.tbl where pk = ?");
+                PreparedStatement ps = session.prepare(insertQuery);
+                PreparedStatement ps2 = session.prepare(selectQuery);
                 for (int i = 0; i < 10; i++)
                 {
                     session.execute(ps.bind(i, 2, 3));
                     session.execute(ps2.bind(i));
                 }
-                assertPSCache(cluster.get(1), false, 0);
+                assertPSCache(cluster.get(1), false, 0, insertQuery, selectQuery);
                 cluster.get(1).nodetoolResult("cms", "initialize").asserts().success();
-                assertPSCache(cluster.get(1), false, 0);
+                assertPSCache(cluster.get(1), false, 0, insertQuery, selectQuery);
                 for (int i = 0; i < 10; i++)
                 {
                     session.execute(ps.bind(i, 3, 3));
@@ -77,7 +80,7 @@ public class ClusterMetadataUpgradePreparedStatementsTest extends UpgradeTestBas
                     session.execute(ps.bind(i, 3, 3));
                     session.execute(ps2.bind(i));
                 }
-                assertPSCache(cluster.get(1), false, 4);
+                assertPSCache(cluster.get(1), false, 4, insertQuery, selectQuery);
             }
         }).run();
     }
@@ -87,14 +90,19 @@ public class ClusterMetadataUpgradePreparedStatementsTest extends UpgradeTestBas
         assertPSCache(inst, true, -1);
     }
 
-    private static void assertPSCache(IUpgradeableInstance inst, boolean shouldBeEmpty, long expectedEpoch)
+    private static void assertPSCache(IUpgradeableInstance inst, boolean shouldBeEmpty, long expectedEpoch, String... queries)
     {
         ((IInvokableInstance)inst).runOnInstance(() -> {
-            if (shouldBeEmpty != QueryProcessor.instance.getPreparedStatements().isEmpty())
+            if (shouldBeEmpty != (QueryProcessor.preparedStatementsCount() == 0))
                 throw new AssertionError("Prepared statements should not be empty after `cms initialize`");
 
-            for (QueryHandler.Prepared p : QueryProcessor.instance.getPreparedStatements().values())
+            for (String query : queries)
             {
+                ResultMessage.Prepared stored = QueryProcessor.getStoredPreparedStatement(query, null);
+                if (stored == null)
+                    throw new AssertionError(String.format("Statement %s is not in the prepared statements cache", query));
+
+                QueryHandler.Prepared p = QueryProcessor.instance.getPrepared(stored.statementId);
                 long statementEpoch = -1;
                 if (p.statement instanceof SelectStatement)
                     statementEpoch = ((SelectStatement)p.statement).table.epoch.getEpoch();

@@ -18,7 +18,6 @@
 
 package org.apache.cassandra.distributed.test;
 
-import java.util.Collection;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,6 +40,7 @@ import org.apache.cassandra.distributed.api.ICluster;
 import org.apache.cassandra.distributed.api.IInvokableInstance;
 import org.apache.cassandra.schema.DistributedSchema;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.transport.messages.ResultMessage;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
 import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
@@ -48,6 +48,7 @@ import static org.apache.cassandra.distributed.api.Feature.GOSSIP;
 import static org.apache.cassandra.distributed.api.Feature.NATIVE_PROTOCOL;
 import static org.apache.cassandra.distributed.api.Feature.NETWORK;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 public class PreparedStatementInvalidationRaceTest extends TestBaseImpl
 {
@@ -65,7 +66,8 @@ public class PreparedStatementInvalidationRaceTest extends TestBaseImpl
                  Session s = cluster.connect())
             {
                 s.execute(withKeyspace("CREATE TABLE %s.tbl (pk int primary key)"));
-                PreparedStatement prepared = s.prepare(withKeyspace("select pk from %s.tbl where pk = ?"));
+                String query = withKeyspace("select pk from %s.tbl where pk = ?");
+                PreparedStatement prepared = s.prepare(query);
                 s.execute(prepared.bind(1));
                 c.get(1).runOnInstance(() -> BBHelper.enabled.set(true));
                 Thread t = new Thread(() -> s.execute(withKeyspace("alter table %s.tbl add x int")));
@@ -85,10 +87,11 @@ public class PreparedStatementInvalidationRaceTest extends TestBaseImpl
                 s.execute(prepared.bind(1));
                 c.get(1).runOnInstance(() -> {
                     TableMetadata tableMetadata = Keyspace.open(KEYSPACE).getColumnFamilyStore("tbl").metadata();
-                    Collection<QueryHandler.Prepared> serverSidePrepared = QueryProcessor.instance.getPreparedStatements().values();
-                    assertEquals(1, serverSidePrepared.size());
-                    for (QueryHandler.Prepared ssp : QueryProcessor.instance.getPreparedStatements().values())
-                        assertEquals(tableMetadata.epoch, ((SelectStatement)ssp.statement).table.epoch);
+                    assertEquals(1, QueryProcessor.preparedStatementsCount());
+                    ResultMessage.Prepared stored = QueryProcessor.getStoredPreparedStatement(query, null);
+                    assertNotNull(stored);
+                    QueryHandler.Prepared ssp = QueryProcessor.instance.getPrepared(stored.statementId);
+                    assertEquals(tableMetadata.epoch, ((SelectStatement)ssp.statement).table.epoch);
                 });
             }
         }
